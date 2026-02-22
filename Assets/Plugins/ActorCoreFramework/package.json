@@ -2,7 +2,7 @@
     "name": "com.glacier.actor-core-framework",
     "displayName": "Actor Core Framework",
     "author": { "name": "Hyouga", "url": "https://x.com/HyougaDev" },
-    "version": "1.0.0",
+    "version": "1.0.1",
     "unity": "6000.3",
     "license": "MIT",
     "category": "Framework",
