@@ -26,9 +26,9 @@ namespace ActorCoreFramework.Tests
 
         void OnMove(InputAction.CallbackContext ctx)
         {
-            if (TryGetControlledPawn(out var pawn))
+            if (TryGetControlledPawn(out var pawn) && pawn is Character2D character)
             {
-                pawn.Move(ctx.ReadValue<Vector2>());
+                character.Rigidbody.linearVelocity = moveAction.ReadValue<Vector2>();
             }
         }
     }
