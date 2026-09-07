@@ -1,6 +1,6 @@
 {
-    "name": "ActorCoreFramework.Tests",
-    "rootNamespace": "ActorCoreFramework.Tests",
+    "name": "ActorCoreFramework.Samples",
+    "rootNamespace": "ActorCoreFramework.Samples",
     "references": [
         "ActorCoreFramework",
         "Unity.InputSystem"
