@@ -3,7 +3,7 @@
     "displayName": "Actor Core Framework",
     "author": { "name": "Hyouga", "url": "https://x.com/HyougaDev" },
     "version": "1.0.1",
-    "unity": "6000.3",
+    "unity": "6000.5",
     "license": "MIT",
     "category": "Framework",
     "dependencies": {}
