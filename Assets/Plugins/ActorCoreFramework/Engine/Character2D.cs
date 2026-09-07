@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using UnityEngine;
 
 namespace ActorCoreFramework
@@ -7,17 +6,16 @@ namespace ActorCoreFramework
     {
         public Rigidbody2D Rigidbody { get; }
         public Collider2D Collider { get; }
-        public ContactFilter2D ContactFilter { get; }
-        public sealed override Vector2 Position => Rigidbody.position;
 
-        protected Character2D(Transform transform, Rigidbody2D rigidbody, Collider2D collider, ContactFilter2D contactFilter) : base(transform)
+        /// <summary>
+        /// 物理の補間が効いた座標を返す。zはPawn2D側でTransformから補われる。
+        /// </summary>
+        public sealed override Vector2 Position2D => Rigidbody.position;
+
+        protected Character2D(Transform transform, Rigidbody2D rigidbody, Collider2D collider) : base(transform)
         {
             Rigidbody = rigidbody;
             Collider = collider;
-            ContactFilter = contactFilter;
         }
-        
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool IsGrounded() => Rigidbody.IsTouching(ContactFilter);
     }
 }
