@@ -78,4 +78,10 @@ crashlytics-build.properties
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
 /[Aa]ssets/[Ss]treamingAssets/aa/*
 
+# JetBrains Rider
+.idea/
+
+# Unity Test Runner results
+/TestResults_*.xml
+
 # End of https://www.toptal.com/developers/gitignore/api/unity
