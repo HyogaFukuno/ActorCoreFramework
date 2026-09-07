@@ -84,6 +84,10 @@ namespace ActorCoreFramework
                 tickGroups[(int)tick.registeredGroup].Add(actor);
             }
 
+            // Tickグループへ登録されなかった場合も、以降の設定変更は受け付けない。
+            // 黙って効かないより、その場で気付けるようにする。
+            tick.locked = true;
+
             return actor;
         }
 

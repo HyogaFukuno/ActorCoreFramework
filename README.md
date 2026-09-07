@@ -151,13 +151,17 @@ Pawn または Controller が破棄されたときも、参照は自動的に切
 
 `PrimaryActorTick` で挙動を指定します。
 
-| プロパティ | 説明 |
-|---|---|
-| `CanEverTick` | Tick を使うか。World への登録時に確定するのでコンストラクタで設定する |
-| `Enabled` | 実行時の一時停止 |
-| `Group` | 所属する TickGroup。登録時に確定する |
-| `Interval` | 0 なら毎フレーム。0.1 なら 0.1 秒ごと |
-| `Priority` | 同一グループ内の実行順。小さいほど先。同値なら登録順 |
+| プロパティ | 変更可能な時期 | 説明 |
+|---|---|---|
+| `CanEverTick` | コンストラクタのみ | Tick を使うか |
+| `Group` | コンストラクタのみ | 所属する TickGroup |
+| `Priority` | コンストラクタのみ | 同一グループ内の実行順。小さいほど先。同値なら登録順 |
+| `Enabled` | いつでも | 実行時の一時停止 |
+| `Interval` | いつでも | 0 なら毎フレーム。0.1 なら 0.1 秒ごと |
+
+`CanEverTick` / `Group` / `Priority` は World への登録時に確定します。
+登録後に変更すると `InvalidOperationException` になるので、コンストラクタで設定してください。
+実行時に Tick を止めたい場合は `Enabled` を使います。
 
 TickGroup と、1 フレーム内での実行順は次のとおりです。
 

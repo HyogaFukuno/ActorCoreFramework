@@ -226,5 +226,38 @@ namespace ActorCoreFramework.Tests
             world.PostTick(0.016f);
             Assert.That(spawned.TickCount, Is.Zero);
         }
+
+        [Test]
+        public void TickSettings_CannotBeChangedAfterRegistration()
+        {
+            var actor = world.Register(Ticking("a"));
+
+            Assert.Throws<InvalidOperationException>(() => actor.PrimaryActorTick.CanEverTick = false);
+            Assert.Throws<InvalidOperationException>(() => actor.PrimaryActorTick.Group = TickGroup.PostTick);
+            Assert.Throws<InvalidOperationException>(() => actor.PrimaryActorTick.Priority = 10);
+        }
+
+        [Test]
+        public void TickSettings_AreLockedEvenWhenTheActorDoesNotTick()
+        {
+            // CanEverTickがfalseだとTickグループへ登録されないが、
+            // その後の有効化も黙って無視されるだけなので同じく弾く
+            var actor = world.Register(new TestActor());
+
+            Assert.Throws<InvalidOperationException>(() => actor.PrimaryActorTick.CanEverTick = true);
+        }
+
+        [Test]
+        public void RuntimeTickSettings_RemainWritableAfterRegistration()
+        {
+            var actor = world.Register(Ticking("a"));
+
+            // 実行時に変えてよいものは従来どおり
+            Assert.DoesNotThrow(() => actor.PrimaryActorTick.Enabled = false);
+            Assert.DoesNotThrow(() => actor.PrimaryActorTick.Interval = 0.5f);
+
+            Assert.That(actor.PrimaryActorTick.Enabled, Is.False);
+            Assert.That(actor.PrimaryActorTick.Interval, Is.EqualTo(0.5f));
+        }
     }
 }

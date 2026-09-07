@@ -290,5 +290,68 @@ namespace ActorCoreFramework.Tests
 
             Assert.That(actor.ToString(), Is.EqualTo($"player#{actor.Id}"));
         }
+
+        [Test]
+        public void AddComponent_RejectsAComponentThatIsAlreadyAttached()
+        {
+            var actor = new TestActor();
+            var component = actor.Add(new TestComponent());
+            var other = new TestActor();
+
+            // 同じActorへの二重合成も、他Actorとの共有も許さない
+            Assert.Throws<InvalidOperationException>(() => actor.Add(component));
+            Assert.Throws<InvalidOperationException>(() => other.Add(component));
+
+            Assert.That(actor.Components, Has.Count.EqualTo(1));
+            Assert.That(other.Components, Is.Empty);
+            Assert.That(component.Owner, Is.SameAs(actor));
+        }
+
+        [Test]
+        public void AddComponent_RejectsADisposedComponent()
+        {
+            var actor = world.Register(new TestActor());
+            var component = actor.Add(new TestComponent());
+            actor.Remove(component);
+
+            var other = world.Register(new TestActor());
+
+            Assert.Throws<InvalidOperationException>(() => other.Add(component));
+        }
+
+        [Test]
+        public void Component_HasBegunPlayMirrorsTheOwnerLifecycle()
+        {
+            var actor = new TestActor();
+            var component = actor.Add(new TestComponent());
+            Assert.That(component.HasBegunPlay, Is.False);
+
+            world.Register(actor);
+            Assert.That(component.HasBegunPlay, Is.True);
+
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+            Assert.That(component.HasBegunPlay, Is.False);
+        }
+
+        [Test]
+        public void RemoveComponent_DuringOwnerEndPlayStillDispatchesComponentEndPlay()
+        {
+            var actor = new TestActor { Name = "a", Log = log };
+            var component = actor.Add(new TestComponent { Name = "c", Log = log });
+            world.Register(actor);
+            log.Entries.Clear();
+
+            // 所有者のEndPlay中はStateが既にEndedなので、
+            // それを配送条件にしているとComponentのEndPlayが飛ぶ
+            actor.EndPlayAction = a => a.Remove(component);
+
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+
+            Assert.That(component.EndPlayCount, Is.EqualTo(1));
+            Assert.That(component.IsDisposed, Is.True);
+            Assert.That(log.Entries, Is.EqualTo(new[] { "a.EndPlay", "c.EndPlay", "c.Dispose", "a.Dispose" }));
+        }
     }
 }

@@ -1,3 +1,5 @@
+using System;
+
 namespace ActorCoreFramework
 {
     /// <summary>
@@ -20,12 +22,25 @@ namespace ActorCoreFramework
 
     public sealed class TickFunction
     {
+        bool canEverTick;
+        TickGroup group = TickGroup.Tick;
+        int priority;
+
         /// <summary>
         /// Tickを使うかどうかの有無。コンストラクタで確定させる。
-        /// World登録後の変更は登録状態に反映されないため、
+        /// World登録後の変更は登録状態に反映できないため、例外になる。
         /// 実行時の切り替えにはEnabledを使うこと。
         /// </summary>
-        public bool CanEverTick { get; set; }
+        /// <exception cref="InvalidOperationException">World登録後に変更した。</exception>
+        public bool CanEverTick
+        {
+            get => canEverTick;
+            set
+            {
+                ThrowIfLocked(nameof(CanEverTick));
+                canEverTick = value;
+            }
+        }
 
         /// <summary>
         /// 実行時の一時停止用フラグ。CanEverTickが無効なら無意味。
@@ -35,7 +50,16 @@ namespace ActorCoreFramework
         /// <summary>
         /// 所属するTickグループ。CanEverTickと同様、コンストラクタで確定させる。
         /// </summary>
-        public TickGroup Group { get; set; } = TickGroup.Tick;
+        /// <exception cref="InvalidOperationException">World登録後に変更した。</exception>
+        public TickGroup Group
+        {
+            get => group;
+            set
+            {
+                ThrowIfLocked(nameof(Group));
+                group = value;
+            }
+        }
 
         /// <summary>
         /// 0なら毎フレーム。0.1なら0.1秒ごとにTickする。
@@ -51,15 +75,42 @@ namespace ActorCoreFramework
         /// 例: Controllerが操作対象のPawnより先に入力を積みたい場合、
         /// ControllerのPriorityをPawnより小さくする。
         /// </summary>
-        public int Priority { get; set; }
+        /// <exception cref="InvalidOperationException">World登録後に変更した。</exception>
+        public int Priority
+        {
+            get => priority;
+            set
+            {
+                ThrowIfLocked(nameof(Priority));
+                priority = value;
+            }
+        }
 
         internal float accumulator;
         internal bool registered;
+
+        /// <summary>
+        /// Worldへの登録が済むとtrue。以降、登録時点で確定する設定は変更できない。
+        /// CanEverTickがfalseで登録されたActorも対象にするため、
+        /// Tickグループへ実際に登録されたかを示すregisteredとは別に持つ。
+        /// </summary>
+        internal bool locked;
 
         /// <summary>
         /// 登録時点のGroup。登録後にGroupが変更されても
         /// 解除先を取り違えないよう、Worldが控えておく。
         /// </summary>
         internal TickGroup registeredGroup;
+
+
+        void ThrowIfLocked(string propertyName)
+        {
+            if (!locked) { return; }
+
+            throw new InvalidOperationException(
+                $"{nameof(TickFunction)}.{propertyName} cannot be changed after the actor has been " +
+                "registered to a World. Set it in the constructor. " +
+                $"To pause ticking at runtime, use {nameof(Enabled)}.");
+        }
     }
 }

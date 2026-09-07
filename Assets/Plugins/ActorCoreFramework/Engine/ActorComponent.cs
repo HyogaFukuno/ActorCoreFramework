@@ -1,3 +1,5 @@
+using System;
+
 namespace ActorCoreFramework
 {
     /// <summary>
@@ -12,8 +14,17 @@ namespace ActorCoreFramework
     /// </summary>
     public abstract class ActorComponent
     {
+        bool attached;
+
         /// <summary>所有者。AddComponentされた時点で設定される。</summary>
         public Actor Owner { get; private set; } = null!;
+
+        /// <summary>
+        /// OnBeginPlayを受け取ってから、対になるOnEndPlayを受け取るまでの間true。
+        /// 所有者のStateではなくこのフラグで判定することで、
+        /// 所有者のEndPlay中に取り外された場合でも配送が対称に保たれる。
+        /// </summary>
+        public bool HasBegunPlay { get; private set; }
 
         /// <summary>実行時の一時停止用フラグ。falseの間はOnTickが呼ばれない。</summary>
         public bool Enabled { get; set; } = true;
@@ -27,11 +38,43 @@ namespace ActorCoreFramework
         public bool IsDisposed { get; private set; }
 
 
-        internal void Attach(Actor owner) => Owner = owner;
+        /// <summary>
+        /// 所有者を確定させる。ActorComponentは1つのActorだけに属する。
+        /// </summary>
+        internal void Attach(Actor owner)
+        {
+            if (IsDisposed)
+            {
+                throw new InvalidOperationException(
+                    $"{GetType().Name} has already been disposed and cannot be attached again.");
+            }
 
-        internal void DispatchBeginPlay() => OnBeginPlay();
+            if (attached)
+            {
+                throw new InvalidOperationException(
+                    $"{GetType().Name} is already attached to {Owner}.");
+            }
 
-        internal void DispatchEndPlay(EndPlayReason reason) => OnEndPlay(reason);
+            attached = true;
+            Owner = owner;
+        }
+
+        internal void DispatchBeginPlay()
+        {
+            if (HasBegunPlay) { return; }
+
+            HasBegunPlay = true;
+            OnBeginPlay();
+        }
+
+        internal void DispatchEndPlay(EndPlayReason reason)
+        {
+            // BeginPlayを受け取っていないなら、対になるEndPlayも配送しない
+            if (!HasBegunPlay) { return; }
+
+            HasBegunPlay = false;
+            OnEndPlay(reason);
+        }
 
         internal void DispatchTick(float deltaTime)
         {

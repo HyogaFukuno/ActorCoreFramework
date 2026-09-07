@@ -74,13 +74,17 @@ namespace ActorCoreFramework
         /// </summary>
         protected T AddComponent<T>(T component) where T : ActorComponent
         {
+            if (component == null) { throw new ArgumentNullException(nameof(component)); }
+
             if (State is ActorState.Ended or ActorState.Disposed)
             {
                 throw new InvalidOperationException($"Cannot add a component to a {State} actor.");
             }
 
-            components.Add(component);
+            // 二重合成や他Actorとの共有を弾く。失敗時に中途半端な状態を残さないよう、
+            // リストへ入れる前に所有権を確定させる。
             component.Attach(this);
+            components.Add(component);
 
             if (State == ActorState.Playing)
             {
@@ -124,12 +128,9 @@ namespace ActorCoreFramework
 
                     components.RemoveAt(i);
 
-                    // BeginPlayを迎えていないComponentにEndPlayは配送しない
-                    if (State == ActorState.Playing)
-                    {
-                        component.DispatchEndPlay(EndPlayReason.Destroyed);
-                    }
-
+                    // BeginPlayを受け取っているかはComponent自身が持つ。
+                    // 所有者のEndPlay中に取り外された場合でも対のEndPlayが届く。
+                    component.DispatchEndPlay(EndPlayReason.Destroyed);
                     component.Dispose();
                 }
             }
