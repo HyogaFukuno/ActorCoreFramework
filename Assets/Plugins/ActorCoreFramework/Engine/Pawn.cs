@@ -7,12 +7,44 @@ namespace ActorCoreFramework
         public Transform Transform { get; }
         public virtual Vector3 Position => Transform.position;
 
+        /// <summary>
+        /// このPawnを操作しているController。未Possessならnull。
+        /// UEのAPawn::GetController()相当。
+        /// </summary>
+        public Controller? Controller { get; internal set; }
+
+        public bool IsControlled => Controller != null;
+
         protected Pawn(Transform transform)
         {
             Transform = transform;
         }
-        
-        public virtual void OnPossessed() { }
-        public virtual void OnUnpossessed() { }
+
+        /// <summary>
+        /// Controllerから移動の「意図」を受け取る。
+        /// 実際の移動処理はPawn側(MovementComponent等)の責務であり、
+        /// Controllerは移動ロジックを知らない。UEのAPawn::AddMovementInput()相当。
+        /// </summary>
+        /// <param name="worldDirection">ワールド空間での移動方向。</param>
+        /// <param name="scaleValue">方向に掛ける倍率。</param>
+        public virtual void AddMovementInput(Vector3 worldDirection, float scaleValue = 1.0f) { }
+
+        // Possess状態はController側が唯一の保持先なので、通知の呼び出し口は
+        // フレームワーク内部に閉じる。外から直接呼べると、Controllerは掴んだままなのに
+        // Pawnだけが「解除された」と信じる、といった状態のズレを作れてしまう。
+        internal void DispatchPossessed() => OnPossessed();
+        internal void DispatchUnpossessed() => OnUnpossessed();
+
+        /// <summary>Possessされた直後に呼ばれる。この時点でControllerは設定済み。</summary>
+        protected virtual void OnPossessed() { }
+
+        /// <summary>Unpossessされた直後に呼ばれる。この時点でControllerはnull。</summary>
+        protected virtual void OnUnpossessed() { }
+
+        internal override void OnInternalEndPlay(EndPlayReason reason)
+        {
+            // 破棄されるPawnへの参照をControllerに残さない
+            Controller?.ForceUnpossess();
+        }
     }
 }

@@ -2,17 +2,29 @@ using UnityEngine;
 
 namespace ActorCoreFramework
 {
-    public abstract class Pawn2D : Actor
+    public abstract class Pawn2D : Pawn
     {
-        public Transform Transform { get; }
-        public virtual Vector2 Position => Transform.position;
+        /// <summary>
+        /// 2D平面上の座標。zを含まないため、Vector3への変換コストを避けたい場合に使う。
+        /// 2DのPawnにおける座標の定義はこちらが基準で、Positionはここから導出される。
+        /// </summary>
+        public virtual Vector2 Position2D => Transform.position;
 
-        protected Pawn2D(Transform transform)
+        /// <summary>
+        /// Position2Dにzを補ったもの。2Dでもzをレイヤ順に使う場合があるので落とさない。
+        /// Position2Dと乖離しないよう、派生クラスはPosition2Dだけを実装すること。
+        /// </summary>
+        public sealed override Vector3 Position
         {
-            Transform = transform;
+            get
+            {
+                var position = Position2D;
+                return new Vector3(position.x, position.y, Transform.position.z);
+            }
         }
-        
-        public virtual void OnPossessed() { }
-        public virtual void OnUnpossessed() { }
+
+        protected Pawn2D(Transform transform) : base(transform)
+        {
+        }
     }
 }
