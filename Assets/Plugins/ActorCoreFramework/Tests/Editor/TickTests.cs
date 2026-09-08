@@ -259,5 +259,39 @@ namespace ActorCoreFramework.Tests
             Assert.That(actor.PrimaryActorTick.Enabled, Is.False);
             Assert.That(actor.PrimaryActorTick.Interval, Is.EqualTo(0.5f));
         }
+
+        [Test]
+        public void Tick_RejectsReentrantCalls()
+        {
+            var actor = Ticking("a");
+            actor.TickAction = _ => world.Tick(0.016f);
+            world.Register(actor);
+
+            Assert.Throws<InvalidOperationException>(() => world.Tick(0.016f));
+        }
+
+        [Test]
+        public void Tick_RejectsDrivingAnotherGroupFromWithinATick()
+        {
+            var actor = Ticking("a");
+            actor.TickAction = _ => world.PostTick(0.016f);
+            world.Register(actor);
+
+            Assert.Throws<InvalidOperationException>(() => world.Tick(0.016f));
+        }
+
+        [Test]
+        public void Tick_IsAcceptedAgainAfterAReentrantCallFailed()
+        {
+            var actor = Ticking("a");
+            actor.TickAction = _ => world.Tick(0.016f);
+            world.Register(actor);
+
+            Assert.Throws<InvalidOperationException>(() => world.Tick(0.016f));
+
+            // 例外で抜けてもフラグは戻る
+            actor.TickAction = null;
+            Assert.DoesNotThrow(() => world.Tick(0.016f));
+        }
     }
 }

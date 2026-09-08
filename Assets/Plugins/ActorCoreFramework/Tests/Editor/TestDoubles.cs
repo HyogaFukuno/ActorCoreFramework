@@ -120,6 +120,14 @@ namespace ActorCoreFramework.Tests
     }
 
 
+    /// <summary>型で絞り込めているかを確かめるための、別型のComponent。</summary>
+    internal sealed class OtherTestComponent : ActorComponent { }
+
+
+    /// <summary>型で絞り込めているかを確かめるための、別型のActor。</summary>
+    internal sealed class OtherTestActor : Actor { }
+
+
     internal sealed class TestPawn : Pawn
     {
         public int PossessedCount;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 
 namespace ActorCoreFramework.Tests
@@ -352,6 +353,38 @@ namespace ActorCoreFramework.Tests
             Assert.That(component.EndPlayCount, Is.EqualTo(1));
             Assert.That(component.IsDisposed, Is.True);
             Assert.That(log.Entries, Is.EqualTo(new[] { "a.EndPlay", "c.EndPlay", "c.Dispose", "a.Dispose" }));
+        }
+
+        [Test]
+        public void GetComponents_CollectsEveryMatchingComponent()
+        {
+            var actor = new TestActor();
+            var first = actor.Add(new TestComponent { Name = "c1" });
+            var second = actor.Add(new TestComponent { Name = "c2" });
+            actor.Add(new OtherTestComponent());
+            world.Register(actor);
+
+            var results = new List<TestComponent>();
+
+            // TryGetComponentと違い、同じ型を複数持っていてもすべて取れる
+            Assert.That(actor.GetComponents(results), Is.EqualTo(2));
+            Assert.That(results, Is.EqualTo(new[] { first, second }));
+        }
+
+        [Test]
+        public void GetComponents_ClearsTheListAndSkipsPendingRemoval()
+        {
+            var actor = new TestActor();
+            var first = actor.Add(new TestComponent());
+            var second = actor.Add(new TestComponent());
+            world.Register(actor);
+
+            // リストを使い回す前提なので、前回の内容は捨てられる
+            var results = new List<TestComponent> { second };
+            actor.Remove(second);
+
+            Assert.That(actor.GetComponents(results), Is.EqualTo(1));
+            Assert.That(results, Is.EqualTo(new[] { first }));
         }
     }
 }

@@ -136,6 +136,30 @@ namespace ActorCoreFramework
             }
         }
 
+        /// <summary>
+        /// 指定した型のComponentをすべて集める。
+        /// 呼び出し側のリストへ詰めるので、リストを使い回せば毎フレーム呼んでも
+        /// アロケーションが発生しない。取り外しが予約されたComponentは対象外。
+        /// </summary>
+        /// <param name="results">結果の格納先。呼び出しごとにクリアされる。</param>
+        /// <returns>集めた件数。</returns>
+        public int GetComponents<T>(List<T> results) where T : ActorComponent
+        {
+            if (results == null) { throw new ArgumentNullException(nameof(results)); }
+
+            results.Clear();
+
+            for (var i = 0; i < components.Count; i++)
+            {
+                var component = components[i];
+                if (component.IsPendingRemoval) { continue; }
+
+                if (component is T found) { results.Add(found); }
+            }
+
+            return results.Count;
+        }
+
         public bool TryGetComponent<T>([NotNullWhen(true)] out T? component) where T : ActorComponent
         {
             for (var i = 0; i < components.Count; i++)

@@ -19,6 +19,7 @@ namespace ActorCoreFramework
         readonly TickGroupList[] tickGroups = CreateTickGroups();
 
         bool disposed;
+        bool ticking;
 
         public IReadOnlyList<Actor> Actors => actors;
 
@@ -92,6 +93,27 @@ namespace ActorCoreFramework
         }
 
         /// <summary>
+        /// 指定した型のActorをすべて集める。UEのGetAllActorsOfClass相当。
+        /// 呼び出し側のリストへ詰めるので、リストを使い回せば毎フレーム呼んでも
+        /// アロケーションが発生しない。破棄が予約されたActorは対象外。
+        /// </summary>
+        /// <param name="results">結果の格納先。呼び出しごとにクリアされる。</param>
+        /// <returns>集めた件数。</returns>
+        public int GetActors<T>(List<T> results) where T : Actor
+        {
+            if (results == null) { throw new ArgumentNullException(nameof(results)); }
+
+            results.Clear();
+
+            for (var i = 0; i < actors.Count; i++)
+            {
+                if (actors[i] is T found && !found.IsPendingDestroy) { results.Add(found); }
+            }
+
+            return results.Count;
+        }
+
+        /// <summary>
         /// Worldからの破棄を予約する。実際の破棄はPostTickの末尾。
         /// 予約された時点でActor.IsPendingDestroyがtrueになり、以降Tickは配送されない。
         /// </summary>
@@ -119,19 +141,59 @@ namespace ActorCoreFramework
         /// </summary>
         public void UnscaledTick(float deltaTime) => TickGroupCore(TickGroup.UnscaledTick, deltaTime);
 
+        /// <summary>
+        /// PostTickグループを回し、末尾で破棄予約を処理する。
+        /// </summary>
         public void PostTick(float deltaTime)
         {
             if (disposed) { return; }
 
-            tickGroups[(int)TickGroup.PostTick].Tick(deltaTime);
-            FlushPendingDestroy();
+            ThrowIfTicking();
+            ticking = true;
+
+            try
+            {
+                tickGroups[(int)TickGroup.PostTick].Tick(deltaTime);
+
+                // 破棄もTickの一部とみなし、この間の再入を許さない
+                FlushPendingDestroy();
+            }
+            finally
+            {
+                ticking = false;
+            }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void TickGroupCore(TickGroup group, float deltaTime)
         {
             if (disposed) { return; }
-            tickGroups[(int)group].Tick(deltaTime);
+
+            ThrowIfTicking();
+            ticking = true;
+
+            try
+            {
+                tickGroups[(int)group].Tick(deltaTime);
+            }
+            finally
+            {
+                ticking = false;
+            }
+        }
+
+        /// <summary>
+        /// Tickの最中にWorldを回そうとしていないか確かめる。
+        ///
+        /// 入れ子で回すと、内側の完了時にTickGroupListの反復中フラグが落ちる。
+        /// 以降の増減が保留に回らず反復中のリストへ即時反映され、添字がずれて
+        /// Tickの取りこぼしや二重配送になる。黙って壊れるので明示的に弾く。
+        /// </summary>
+        void ThrowIfTicking()
+        {
+            if (!ticking) { return; }
+
+            throw new InvalidOperationException(
+                $"{nameof(World)} is already ticking. Do not drive the world from within a tick.");
         }
 
         void FlushPendingDestroy()

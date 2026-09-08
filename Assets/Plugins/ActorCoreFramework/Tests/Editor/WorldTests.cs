@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 
 namespace ActorCoreFramework.Tests
@@ -185,6 +186,33 @@ namespace ActorCoreFramework.Tests
             world.PostTick(0.016f);
 
             Assert.That(actor.TickCount, Is.Zero);
+        }
+
+        [Test]
+        public void GetActors_CollectsOnlyTheMatchingType()
+        {
+            var first = world.Register(new TestActor());
+            var second = world.Register(new TestActor());
+            world.Register(new OtherTestActor());
+
+            var results = new List<TestActor>();
+
+            Assert.That(world.GetActors(results), Is.EqualTo(2));
+            Assert.That(results, Is.EqualTo(new[] { first, second }));
+        }
+
+        [Test]
+        public void GetActors_SkipsActorsPendingDestroy()
+        {
+            var kept = world.Register(new TestActor());
+            var doomed = world.Register(new TestActor());
+
+            world.Destroy(doomed);
+
+            // 破棄予約済みのActorは、実際の破棄を待たずに検索対象から外れる
+            var results = new List<TestActor>();
+            Assert.That(world.GetActors(results), Is.EqualTo(1));
+            Assert.That(results, Is.EqualTo(new[] { kept }));
         }
     }
 }

@@ -111,6 +111,21 @@ RemoveComponent(health);   // EndPlay と Dispose が配送される
 Tick は所有者の Actor から配送されるため、TickGroup と Interval は所有者の `PrimaryActorTick` に従います。
 Component 単位で止めたい場合は `Enabled` を使います。
 
+### 検索
+
+Actor と Component は型で引けます。いずれも呼び出し側のリストへ詰める形なので、
+リストを使い回せば毎フレーム呼んでもアロケーションが発生しません。
+取り外しや破棄が予約されたものは、実際に消える前でも検索対象から外れます。
+
+```csharp
+readonly List<WeaponComponent> weapons = new();
+readonly List<Enemy> enemies = new();
+
+actor.TryGetComponent<HealthComponent>(out var health); // 単一。最初の1件
+actor.GetComponents(weapons);                           // 同じ型を複数持つ場合
+world.GetActors(enemies);                               // UE の GetAllActorsOfClass 相当
+```
+
 ### Pawn と Controller
 
 `Pawn` は操作される対象、`Controller` は操作する主体です。Controller は移動ロジックを知らず、意図だけを渡します。
