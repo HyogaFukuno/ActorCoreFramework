@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 
 namespace ActorCoreFramework
 {
@@ -15,7 +16,13 @@ namespace ActorCoreFramework
         readonly List<Actor> pendingDestroy = new();
         readonly HashSet<Actor> pendingDestroySet = new();
 
-        // TickGroupの要素数に追従させる。列挙子を増やしても初期化漏れが起きない。
+        /// <summary>
+        /// TickGroupの値をそのまま添字に使うため、最大値+1を長さとする。
+        /// 列挙子を増やしても、値が連番でなくても初期化漏れや添字外れが起きない。
+        /// Worldごとにリフレクションを走らせないよう、一度だけ求める。
+        /// </summary>
+        static readonly int s_tickGroupCount = GetTickGroupCount();
+
         readonly TickGroupList[] tickGroups = CreateTickGroups();
 
         bool disposed;
@@ -24,9 +31,20 @@ namespace ActorCoreFramework
         public IReadOnlyList<Actor> Actors => actors;
 
 
+        static int GetTickGroupCount()
+        {
+            var max = 0;
+            foreach (TickGroup group in Enum.GetValues(typeof(TickGroup)))
+            {
+                if ((int)group > max) { max = (int)group; }
+            }
+
+            return max + 1;
+        }
+
         static TickGroupList[] CreateTickGroups()
         {
-            var groups = new TickGroupList[Enum.GetValues(typeof(TickGroup)).Length];
+            var groups = new TickGroupList[s_tickGroupCount];
             for (var i = 0; i < groups.Length; i++) { groups[i] = new TickGroupList(); }
 
             return groups;
@@ -65,18 +83,9 @@ namespace ActorCoreFramework
 
             actors.Add(actor);
 
-            try
-            {
-                actor.DispatchBeginPlay(this); // ここでPossessなどが走る
-            }
-            catch
-            {
-                // BeginPlayが失敗したActorをPlayingのまま残さない
-                actors.Remove(actor);
-                actor.Dispose();
-                throw;
-            }
-
+            // Tickグループへの登録はBeginPlayより先に済ませる。
+            // 後に回すと、BeginPlayの中で更にRegisterされたActorが先にグループへ入り、
+            // Priorityが同値のときの「登録順を保つ」という約束が破れる。
             var tick = actor.PrimaryActorTick;
             if (tick is { CanEverTick: true, registered: false })
             {
@@ -87,7 +96,22 @@ namespace ActorCoreFramework
 
             // Tickグループへ登録されなかった場合も、以降の設定変更は受け付けない。
             // 黙って効かないより、その場で気付けるようにする。
+            // BeginPlayより前にロックすることで、OnBeginPlayでの変更も同じ扱いになる。
             tick.locked = true;
+
+            try
+            {
+                actor.DispatchBeginPlay(this); // ここでPossessなどが走る
+            }
+            catch
+            {
+                // BeginPlayが失敗したActorをPlayingのまま残さない。
+                // 先に済ませたTickグループへの登録も巻き戻す。
+                UnregisterTick(actor);
+                actors.Remove(actor);
+                actor.Dispose();
+                throw;
+            }
 
             return actor;
         }
@@ -116,8 +140,11 @@ namespace ActorCoreFramework
         /// <summary>
         /// Worldからの破棄を予約する。実際の破棄はPostTickの末尾。
         /// 予約された時点でActor.IsPendingDestroyがtrueになり、以降Tickは配送されない。
+        ///
+        /// null、既に破棄済み、他のWorldが所有するActorは黙って無視する。
+        /// 破棄は「その状態へ持っていく」要求なので、既にそうなっているなら成功と同じ扱いでよい。
         /// </summary>
-        public void Destroy(Actor actor)
+        public void Destroy(Actor? actor)
         {
             if (disposed) { return; }
             if (actor == null) { return; }
@@ -151,9 +178,14 @@ namespace ActorCoreFramework
             ThrowIfTicking();
             ticking = true;
 
+            ExceptionDispatchInfo? failure = null;
+
             try
             {
-                tickGroups[(int)TickGroup.PostTick].Tick(deltaTime);
+                // Tickが例外で抜けても破棄予約は必ず処理する。
+                // ここを飛ばすと、Destroyされたはずの Actor が次フレームまで生き残る。
+                try { tickGroups[(int)TickGroup.PostTick].Tick(deltaTime); }
+                catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
 
                 // 破棄もTickの一部とみなし、この間の再入を許さない
                 FlushPendingDestroy();
@@ -162,6 +194,8 @@ namespace ActorCoreFramework
             {
                 ticking = false;
             }
+
+            failure?.Throw();
         }
 
         void TickGroupCore(TickGroup group, float deltaTime)
@@ -200,50 +234,84 @@ namespace ActorCoreFramework
         {
             if (pendingDestroy.Count <= 0) { return; }
 
+            // 1体の失敗で残りのActorが後始末を受け取れなくなるのを防ぐ。
+            // 最初の例外だけを控え、予約をすべて処理し終えてから呼び出し元へ投げ直す。
+            ExceptionDispatchInfo? failure = null;
+
             // 破棄処理中にさらにDestroyが積まれても同一フレームで拾う
             for (var i = 0; i < pendingDestroy.Count; i++)
             {
                 var actor = pendingDestroy[i];
-                Unregister(actor, EndPlayReason.Destroyed);
-                actor.Dispose();
+
+                try { Unregister(actor, EndPlayReason.Destroyed); }
+                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+
+                try { actor.Dispose(); }
+                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
             }
 
             pendingDestroy.Clear();
             pendingDestroySet.Clear();
+
+            failure?.Throw();
         }
 
         void Unregister(Actor actor, EndPlayReason reason)
         {
-            var tick = actor.PrimaryActorTick;
-            if (tick.registered)
-            {
-                tick.registered = false;
-                // Groupが実行時に変更されていても、登録先から確実に外す
-                tickGroups[(int)tick.registeredGroup].Remove(actor);
-            }
+            UnregisterTick(actor);
 
             actors.Remove(actor);
             actor.DispatchEndPlay(reason);
         }
 
+        void UnregisterTick(Actor actor)
+        {
+            var tick = actor.PrimaryActorTick;
+            if (!tick.registered) { return; }
+
+            tick.registered = false;
+            // Groupが実行時に変更されていても、登録先から確実に外す
+            tickGroups[(int)tick.registeredGroup].Remove(actor);
+        }
+
+        /// <summary>
+        /// Worldを破棄し、所有するActorすべてにWorldShutdownのEndPlayを配送する。
+        /// </summary>
+        /// <exception cref="InvalidOperationException">Tickの最中に呼んだ。</exception>
         public void Dispose()
         {
             if (disposed) { return; }
+
+            // Tickの最中に破棄すると、TickGroupListが反復中のリストをClearすることになり
+            // そのフレームの残りのActorが黙って落ちる。Tickと同じ理由で明示的に弾く。
+            ThrowIfTicking();
+
             disposed = true;
+
+            // 1体の失敗で残りのActorが後始末を受け取れなくなるのを防ぐ。
+            // ここで打ち切るとdisposedだけが立ち、二度目のDisposeも即returnするため
+            // 残りのActorは永久にEndPlayもDisposeも受け取れなくなる。
+            ExceptionDispatchInfo? failure = null;
 
             // 生成と逆順に破棄する(依存の切断順序を安定させる)
             for (var i = actors.Count - 1; i >= 0; i--)
             {
                 var actor = actors[i];
                 actor.PrimaryActorTick.registered = false;
-                actor.DispatchEndPlay(EndPlayReason.WorldShutdown);
-                actor.Dispose();
+
+                try { actor.DispatchEndPlay(EndPlayReason.WorldShutdown); }
+                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+
+                try { actor.Dispose(); }
+                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
             }
 
             actors.Clear();
             pendingDestroy.Clear();
             pendingDestroySet.Clear();
             foreach (var group in tickGroups) { group.Clear(); }
+
+            failure?.Throw();
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

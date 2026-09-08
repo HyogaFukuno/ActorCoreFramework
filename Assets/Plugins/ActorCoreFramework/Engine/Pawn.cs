@@ -29,11 +29,17 @@ namespace ActorCoreFramework
         /// <param name="scaleValue">方向に掛ける倍率。</param>
         public virtual void AddMovementInput(Vector3 worldDirection, float scaleValue = 1.0f) { }
 
+        // Possess状態はController側が唯一の保持先なので、通知の呼び出し口は
+        // フレームワーク内部に閉じる。外から直接呼べると、Controllerは掴んだままなのに
+        // Pawnだけが「解除された」と信じる、といった状態のズレを作れてしまう。
+        internal void DispatchPossessed() => OnPossessed();
+        internal void DispatchUnpossessed() => OnUnpossessed();
+
         /// <summary>Possessされた直後に呼ばれる。この時点でControllerは設定済み。</summary>
-        public virtual void OnPossessed() { }
+        protected virtual void OnPossessed() { }
 
         /// <summary>Unpossessされた直後に呼ばれる。この時点でControllerはnull。</summary>
-        public virtual void OnUnpossessed() { }
+        protected virtual void OnUnpossessed() { }
 
         internal override void OnInternalEndPlay(EndPlayReason reason)
         {

@@ -56,6 +56,9 @@ namespace ActorCoreFramework
         /// 操作対象のPawnを差し替える。
         /// Possess状態の整合を保つため非virtual。差し替えに反応したい場合は
         /// Pawn側のOnPossessed / OnUnpossessedを使うこと。
+        ///
+        /// 破棄済み、または破棄が予約されたPawnを渡した場合はnullを渡したものとして扱い、
+        /// 現在のPawnの解除だけが行われる。BeginPlay前に渡したPawnがその後破棄された場合も同様。
         /// </summary>
         public void SwitchControlledPawn(TPawn? pawn)
         {
@@ -76,8 +79,26 @@ namespace ActorCoreFramework
             }
         }
 
+        /// <summary>
+        /// Possessの対象にできるかどうか。
+        ///
+        /// Pawnは自身のEndPlayでControllerの参照を切る(Pawn.OnInternalEndPlay)。
+        /// EndPlayが済んだ後にPossessすると、その切断はもう行われないため、
+        /// 破棄済みPawnへの参照がControllerに残り続ける。
+        /// 破棄が予約されたPawnも、以降Tickが配送されないので検索系と同様に対象外とする。
+        ///
+        /// World未登録(Created)のPawnは許す。まだ死んでいないだけで、
+        /// 後から登録されればBeginPlayが届き、破棄されればEndPlayで参照も切られる。
+        /// </summary>
+        static bool CanPossess(Pawn pawn) =>
+            pawn.State is ActorState.Created or ActorState.Playing && !pawn.IsPendingDestroy;
+
         void Possess(TPawn? pawn)
         {
+            // 掴めない相手は「指定されなかった」ものとして扱う。
+            // 現在のPawnはこの後の経路で通常どおり解除される。
+            if (pawn != null && !CanPossess(pawn)) { pawn = null; }
+
             if (ReferenceEquals(ControlledPawn, pawn)) { return; }
 
             // OnUnpossessed / OnPossessedの中から同じControllerのPossessが呼ばれると、
@@ -99,7 +120,7 @@ namespace ActorCoreFramework
                     ControlledPawn = null;
 
                     previous.Controller = null;
-                    previous.OnUnpossessed();
+                    previous.DispatchUnpossessed();
                 }
 
                 if (pawn == null) { return; }
@@ -110,7 +131,7 @@ namespace ActorCoreFramework
                 ControlledPawn = pawn;
 
                 pawn.Controller = this;
-                pawn.OnPossessed();
+                pawn.DispatchPossessed();
             }
             finally
             {

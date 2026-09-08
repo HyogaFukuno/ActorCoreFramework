@@ -138,13 +138,13 @@ namespace ActorCoreFramework.Tests
 
         public TestPawn(Transform transform) : base(transform) { }
 
-        public override void OnPossessed()
+        protected override void OnPossessed()
         {
             PossessedCount++;
             PossessedAction?.Invoke(this);
         }
 
-        public override void OnUnpossessed()
+        protected override void OnUnpossessed()
         {
             UnpossessedCount++;
             UnpossessedAction?.Invoke(this);

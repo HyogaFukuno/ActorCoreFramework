@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 
 namespace ActorCoreFramework
@@ -98,8 +99,8 @@ namespace ActorCoreFramework
         /// Componentを取り外して破棄する。Actorが再生中なら、その場でEndPlayが配送される。
         /// Tick中に呼んだ場合、実際の除去はそのTickが終わってから行われる。
         /// </summary>
-        /// <returns>取り外しを受け付けたならtrue。所有者が違う、または予約済みならfalse。</returns>
-        protected bool RemoveComponent(ActorComponent component)
+        /// <returns>取り外しを受け付けたならtrue。nullや所有者違い、予約済みならfalse。</returns>
+        protected bool RemoveComponent(ActorComponent? component)
         {
             if (component == null) { return false; }
             if (!ReferenceEquals(component.Owner, this)) { return false; }
@@ -200,20 +201,36 @@ namespace ActorCoreFramework
             OnBeginPlay();
         }
 
+        /// <summary>
+        /// EndPlayを配送する。
+        ///
+        /// 派生クラスやComponentが例外を投げても巻き戻しは最後まで進める。
+        /// ここで打ち切ると、対になるEndPlayを受け取れないComponentや、
+        /// 破棄されるPawnを掴んだままのControllerが残る。
+        /// 最初の例外だけを控え、すべて配送し終えてから呼び出し元へ投げ直す。
+        /// </summary>
         internal void DispatchEndPlay(EndPlayReason reason)
         {
             if (State != ActorState.Playing) { return; }
 
             State = ActorState.Ended;
-            OnEndPlay(reason);
+
+            ExceptionDispatchInfo? failure = null;
+
+            try { OnEndPlay(reason); }
+            catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
 
             // 合成と逆順に解除する
             for (var i = components.Count - 1; i >= 0; i--)
             {
-                components[i].DispatchEndPlay(reason);
+                try { components[i].DispatchEndPlay(reason); }
+                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
             }
 
-            OnInternalEndPlay(reason);
+            try { OnInternalEndPlay(reason); }
+            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+
+            failure?.Throw();
         }
 
         internal void DispatchTick(float deltaTime)
@@ -273,24 +290,32 @@ namespace ActorCoreFramework
         {
             if (State == ActorState.Disposed) { return; }
 
+            // DispatchEndPlayと同様、途中で例外が出ても解放は最後まで進める
+            ExceptionDispatchInfo? failure = null;
+
             // World.Dispose経由など、EndPlayを経ていない場合に備える
             if (State == ActorState.Playing)
             {
-                DispatchEndPlay(EndPlayReason.Destroyed);
+                try { DispatchEndPlay(EndPlayReason.Destroyed); }
+                catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
             }
 
             State = ActorState.Disposed;
 
             for (var i = components.Count - 1; i >= 0; i--)
             {
-                components[i].Dispose();
+                try { components[i].Dispose(); }
+                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
             }
             components.Clear();
 
-            OnDispose();
+            try { OnDispose(); }
+            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
 
             // ComponentやOnDisposeからWorldを参照できるよう、参照を切るのは最後
             World = null;
+
+            failure?.Throw();
         }
 
 

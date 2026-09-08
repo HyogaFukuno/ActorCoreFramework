@@ -293,5 +293,64 @@ namespace ActorCoreFramework.Tests
             actor.TickAction = null;
             Assert.DoesNotThrow(() => world.Tick(0.016f));
         }
+
+        [Test]
+        public void Tick_ContinuesWithTheRemainingActorsWhenOneThrows()
+        {
+            var thrower = new ThrowingActor { Name = "thrower", Log = log };
+            thrower.PrimaryActorTick.CanEverTick = true;
+            thrower.PrimaryActorTick.Priority = -100; // 先に回る
+
+            world.Register(thrower);
+            var after = world.Register(Ticking("after", priority: 100));
+
+            // 例外自体は握り潰さず、グループを回し終えてから投げ直す
+            Assert.Throws<InvalidOperationException>(() => world.Tick(0.016f));
+
+            // Priorityの高い1体の不具合で後続が丸ごと止まってはいけない
+            Assert.That(after.TickCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Register_DuringBeginPlayKeepsRegistrationOrderForEqualPriority()
+        {
+            var parent = Ticking("parent");
+            parent.BeginPlayAction = _ => world.Register(Ticking("child"));
+
+            world.Register(parent);
+            world.Tick(0.016f);
+
+            // BeginPlayの中で登録された子に、親が追い越されてはいけない
+            Assert.That(log.Entries, Is.EqualTo(new[]
+            {
+                "parent.BeginPlay", "child.BeginPlay", "parent.Tick", "child.Tick"
+            }));
+        }
+
+        [Test]
+        public void TickSettings_AreAlreadyLockedInOnBeginPlay()
+        {
+            // ロックはBeginPlayより前。OnBeginPlayでの変更も登録内容に反映できない。
+            var actor = Ticking("a");
+            actor.BeginPlayAction = self => self.PrimaryActorTick.Priority = 10;
+
+            Assert.Throws<InvalidOperationException>(() => world.Register(actor));
+        }
+
+        [Test]
+        public void Register_RollsBackTheTickRegistrationWhenBeginPlayThrows()
+        {
+            var thrower = Ticking("thrower");
+            thrower.BeginPlayAction = _ => throw new InvalidOperationException("boom");
+
+            Assert.Throws<InvalidOperationException>(() => world.Register(thrower));
+
+            var survivor = world.Register(Ticking("survivor"));
+            world.Tick(0.016f);
+
+            // 登録に失敗したActorがTickグループへ残っていないこと
+            Assert.That(survivor.TickCount, Is.EqualTo(1));
+            Assert.That(thrower.TickCount, Is.Zero);
+        }
     }
 }

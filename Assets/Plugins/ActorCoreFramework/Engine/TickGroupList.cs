@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Runtime.ExceptionServices;
 
 namespace ActorCoreFramework
 {
@@ -69,9 +71,19 @@ namespace ActorCoreFramework
             actors.Insert(index, actor);
         }
 
+        /// <summary>
+        /// グループ内のActorをPriority順にTickする。
+        ///
+        /// 1体が例外を投げても残りのActorはTickする。ここで打ち切ると、
+        /// Priorityの高い1体の不具合で後続が丸ごとTickされなくなる。
+        /// ただし例外を握り潰すと気付けないため、最初の例外を控えておき
+        /// グループを回し終えてから呼び出し元へ投げ直す(実行時はWorldLoopがログに出す)。
+        /// </summary>
         public void Tick(float deltaTime)
         {
             ticking = true;
+
+            ExceptionDispatchInfo? failure = null;
 
             try
             {
@@ -94,7 +106,7 @@ namespace ActorCoreFramework
 
                     if (tick.Interval <= 0.0f)
                     {
-                        actor.DispatchTick(deltaTime);
+                        Dispatch(actor, deltaTime, ref failure);
                         continue;
                     }
 
@@ -110,7 +122,7 @@ namespace ActorCoreFramework
                     tick.accumulator %= tick.Interval;
                     elapsed -= tick.accumulator;
 
-                    actor.DispatchTick(elapsed); // 間引いた分のDeltaをまとめて渡す
+                    Dispatch(actor, elapsed, ref failure); // 間引いた分のDeltaをまとめて渡す
                 }
             }
             finally
@@ -118,6 +130,20 @@ namespace ActorCoreFramework
                 // Tick中に例外が出ても、状態と保留分は必ず反映してから抜ける
                 ticking = false;
                 FlushPending();
+            }
+
+            failure?.Throw();
+        }
+
+        static void Dispatch(Actor actor, float deltaTime, ref ExceptionDispatchInfo? failure)
+        {
+            try
+            {
+                actor.DispatchTick(deltaTime);
+            }
+            catch (Exception e)
+            {
+                failure ??= ExceptionDispatchInfo.Capture(e);
             }
         }
 

@@ -214,5 +214,84 @@ namespace ActorCoreFramework.Tests
             Assert.That(world.GetActors(results), Is.EqualTo(1));
             Assert.That(results, Is.EqualTo(new[] { kept }));
         }
+
+        [Test]
+        public void Dispose_EndsEveryActorEvenWhenOneEndPlayThrows()
+        {
+            var first = world.Register(new TestActor { Name = "first" });
+            var thrower = world.Register(new TestActor
+            {
+                Name = "thrower",
+                EndPlayAction = _ => throw new InvalidOperationException("boom")
+            });
+            var last = world.Register(new TestActor { Name = "last" });
+
+            // 例外は最初の1件だけ呼び出し元へ伝える
+            Assert.Throws<InvalidOperationException>(() => world.Dispose());
+
+            // 1体の失敗で残りが後始末を受け取れなくなってはいけない
+            Assert.That(first.State, Is.EqualTo(ActorState.Disposed));
+            Assert.That(thrower.State, Is.EqualTo(ActorState.Disposed));
+            Assert.That(last.State, Is.EqualTo(ActorState.Disposed));
+            Assert.That(first.EndPlayCount, Is.EqualTo(1));
+            Assert.That(last.EndPlayCount, Is.EqualTo(1));
+            Assert.That(world.Actors, Is.Empty);
+        }
+
+        [Test]
+        public void FlushPendingDestroy_ContinuesWhenOneEndPlayThrows()
+        {
+            var thrower = world.Register(new TestActor
+            {
+                Name = "thrower",
+                EndPlayAction = _ => throw new InvalidOperationException("boom")
+            });
+            var other = world.Register(new TestActor { Name = "other" });
+
+            world.Destroy(thrower);
+            world.Destroy(other);
+
+            Assert.Throws<InvalidOperationException>(() => world.PostTick(0.016f));
+
+            Assert.That(thrower.State, Is.EqualTo(ActorState.Disposed));
+            Assert.That(other.State, Is.EqualTo(ActorState.Disposed));
+
+            // 予約が残ったままだと次フレームで破棄済みActorを再処理してしまう
+            Assert.That(world.Actors, Is.Empty);
+        }
+
+        [Test]
+        public void Dispose_RejectsBeingCalledFromWithinATick()
+        {
+            var actor = new TestActor { TickAction = _ => world.Dispose() };
+            actor.PrimaryActorTick.CanEverTick = true;
+            world.Register(actor);
+
+            // 反復中のリストをClearすることになり、そのフレームの残りが黙って落ちる
+            Assert.Throws<InvalidOperationException>(() => world.Tick(0.016f));
+            Assert.That(actor.State, Is.EqualTo(ActorState.Playing));
+        }
+
+        [Test]
+        public void PostTick_FlushesPendingDestroyEvenWhenTickThrows()
+        {
+            var doomed = world.Register(new TestActor { Name = "doomed" });
+
+            var thrower = new TestActor
+            {
+                Name = "thrower",
+                TickAction = _ => throw new InvalidOperationException("boom")
+            };
+            thrower.PrimaryActorTick.CanEverTick = true;
+            thrower.PrimaryActorTick.Group = TickGroup.PostTick;
+            world.Register(thrower);
+
+            world.Destroy(doomed);
+
+            Assert.Throws<InvalidOperationException>(() => world.PostTick(0.016f));
+
+            // 破棄予約を飛ばすと、Destroyされたはずのactorが次フレームまで生き残る
+            Assert.That(doomed.State, Is.EqualTo(ActorState.Disposed));
+        }
     }
 }

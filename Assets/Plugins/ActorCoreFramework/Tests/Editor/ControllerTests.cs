@@ -208,5 +208,56 @@ namespace ActorCoreFramework.Tests
 
             Assert.Throws<InvalidOperationException>(() => controller.SwitchControlledPawn(second));
         }
+
+        [Test]
+        public void Possess_IgnoresADestroyedPawn()
+        {
+            var pawn = world.Register(NewPawn());
+            world.Destroy(pawn);
+            world.PostTick(0.016f);
+            Assert.That(pawn.State, Is.EqualTo(ActorState.Disposed));
+
+            // 破棄済みPawnを掴むと、参照を切る機会(PawnのEndPlay)がもう来ない
+            var controller = world.Register(new TestController(pawn));
+
+            Assert.That(controller.ControlledPawn, Is.Null);
+            Assert.That(pawn.Controller, Is.Null);
+            Assert.That(pawn.PossessedCount, Is.Zero);
+        }
+
+        [Test]
+        public void SwitchControlledPawn_IgnoresAPawnPendingDestroy()
+        {
+            var alive = world.Register(NewPawn("alive"));
+            var doomed = world.Register(NewPawn("doomed"));
+            var controller = world.Register(new TestController(alive));
+
+            world.Destroy(doomed); // 実際の破棄はPostTickまで遅延する
+
+            controller.SwitchControlledPawn(doomed);
+
+            // 破棄予約済みは検索系と同様に見つからないものとして扱い、現在のPawnだけ解除する
+            Assert.That(controller.ControlledPawn, Is.Null);
+            Assert.That(doomed.Controller, Is.Null);
+            Assert.That(doomed.PossessedCount, Is.Zero);
+            Assert.That(alive.UnpossessedCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Possess_AcceptsAPawnThatIsNotRegisteredYet()
+        {
+            // Controllerを先に登録する順序でも通る。まだ死んでいないだけで、
+            // 後から登録されればBeginPlayが届く。
+            var pawn = NewPawn();
+            var controller = world.Register(new TestController(pawn));
+
+            Assert.That(controller.ControlledPawn, Is.SameAs(pawn));
+            Assert.That(pawn.PossessedCount, Is.EqualTo(1));
+
+            world.Register(pawn);
+
+            Assert.That(pawn.State, Is.EqualTo(ActorState.Playing));
+            Assert.That(controller.ControlledPawn, Is.SameAs(pawn));
+        }
     }
 }

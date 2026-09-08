@@ -155,6 +155,11 @@ controller.SwitchControlledPawn(otherPawn); // 差し替え。前の Pawn は自
 他の Controller が操作中の Pawn を指定すると、先にそちらが解除されます。
 Pawn または Controller が破棄されたときも、参照は自動的に切られます。
 
+破棄済み、または `World.Destroy` で破棄が予約された Pawn を指定した場合は、`null` を指定したものとして扱われます
+（現在の Pawn の解除だけが行われ、破棄済みの Pawn は掴みません）。
+破棄済みの Pawn は参照を切る機会がもう来ないため、掴むと Controller 側に参照が残り続けるからです。
+まだ `World` に登録していない Pawn は指定できます。後から登録すれば `BeginPlay` が届きます。
+
 ### 型の対応
 
 | 用途 | 3D | 2D |
@@ -175,7 +180,8 @@ Pawn または Controller が破棄されたときも、参照は自動的に切
 | `Interval` | いつでも | 0 なら毎フレーム。0.1 なら 0.1 秒ごと |
 
 `CanEverTick` / `Group` / `Priority` は World への登録時に確定します。
-登録後に変更すると `InvalidOperationException` になるので、コンストラクタで設定してください。
+確定は `BeginPlay` より前なので、`OnBeginPlay` の中での変更も受け付けません。
+確定後に変更すると `InvalidOperationException` になるので、コンストラクタで設定してください。
 実行時に Tick を止めたい場合は `Enabled` を使います。
 
 TickGroup と、1 フレーム内での実行順は次のとおりです。
@@ -198,12 +204,33 @@ TickGroup と、1 フレーム内での実行順は次のとおりです。
 
 `EndPlayReason` は `Destroyed`（`World.Destroy` による破棄）と `WorldShutdown`（`World.Dispose` による破棄）を区別します。
 
+### コールバックが例外を投げた場合
+
+`OnTick` / `OnEndPlay` / `OnDispose` が例外を投げても、配送は途中で打ち切られません。
+
+- Tick — 同じ TickGroup の残りの Actor は通常どおり Tick されます
+- 破棄 — 残りの Component と Actor は `EndPlay` と `Dispose` を受け取ります
+- `PostTick` — Tick が例外で抜けても、末尾の破棄予約は処理されます
+
+握り潰しはせず、その回で最初に発生した例外だけを配送完了後に投げ直します。
+実行時は `WorldLoop` が捕捉して `Debug.LogException` に出すので、フレームは止まりません。
+
+`World.Dispose` を `OnTick` の中から呼ぶことはできません（`InvalidOperationException`）。
+反復中の Tick リストを破棄することになり、そのフレームの残りが黙って落ちるためです。
+
 ## テスト
 
 - EditMode: `Assets/Plugins/ActorCoreFramework/Tests/Editor`
 - PlayMode: `Assets/Plugins/ActorCoreFramework/Tests/Runtime`（PlayerLoop への差し込みと実行順）
 
 Unity の Test Runner から実行できます。
+
+## サンプル
+
+`Assets/Plugins/ActorCoreFramework.Samples`（リポジトリ内。パッケージには含まれません）
+
+Input System に依存するため、パッケージ本体とは分けてあります。
+パッケージ側に置くと、Input System を導入していないプロジェクトで参照が解決できずコンパイルエラーになります。
 
 ## ライセンス
 
