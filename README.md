@@ -22,8 +22,15 @@ Unity 6000.5 以降 / C# 9
 Package Manager の **Add package from git URL** に以下を入力します。
 
 ```
-https://github.com/HyogaFukuno/ActorCoreFramework.git?path=/Assets/Plugins/ActorCoreFramework
+https://github.com/HyogaFukuno/ActorCoreFramework.git?path=/Assets/Plugins/ActorCoreFramework#v2.0.0
 ```
+
+末尾の `#v2.0.0` がバージョンの指定です。省略すると `main` の先端を取得するため、
+破壊的変更が入ったときに、こちらの都合と関係なくそれが降ってきます。
+更新のタイミングは自分で選べるよう、タグを指定することをおすすめします。
+
+タグの一覧は [Releases](https://github.com/HyogaFukuno/ActorCoreFramework/releases) にあります。
+更新時は [CHANGELOG](Assets/Plugins/ActorCoreFramework/CHANGELOG.md) で破壊的変更を確認してください。
 
 ## 使い方
 
