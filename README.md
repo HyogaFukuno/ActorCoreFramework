@@ -211,6 +211,50 @@ TickGroup と、1 フレーム内での実行順は次のとおりです。
 
 `EndPlayReason` は `Destroyed`（`World.Destroy` による破棄）と `WorldShutdown`（`World.Dispose` による破棄）を区別します。
 
+### 非同期処理
+
+`Actor.DestroyToken` は Actor の寿命に紐づく `CancellationToken` です。`EndPlay` の入口、
+派生クラスの `OnEndPlay` より前に発火します。非同期処理には必ずこれを渡してください。
+
+```csharp
+protected override void OnBeginPlay()
+{
+    _ = RunAsync(DestroyToken);
+}
+
+async Awaitable RunAsync(CancellationToken token)
+{
+    try
+    {
+        var data = await LoadAsync(token);
+
+        // 再開時点でActorが生きている保証はない。必ず確認する
+        token.ThrowIfCancellationRequested();
+        if (!IsPlaying) { return; }
+
+        Apply(data);
+    }
+    catch (OperationCanceledException) { }          // 破棄による正常終了
+    catch (Exception e) { Debug.LogException(e); }  // 非同期の例外はWorldLoopを通らない
+}
+```
+
+渡さないと、Actor が破棄された後も継続が走り、`World` の管理外から破棄済みの Actor を
+触ることになります。
+
+注意点が 3 つあります。
+
+- **キャンセルは協調的です。** `EndPlay` の完了と非同期処理の停止は同期しません。
+  走り出している継続は再開しうるので、再開後は上のように生存を確認してください
+- **`OnEndPlay` で `await` はできません。** `EndPlay` / `Dispose` は同期的に完結する契約です。
+  後始末は「キャンセルを投げる」までで、「完了を待つ」ことはできません
+- **非同期の例外は `WorldLoop` の捕捉を通りません。** 呼び出し側で必ず捕捉してください
+
+`EndPlay` 後に `DestroyToken` を取得すると、最初からキャンセル済みのトークンが返ります。
+破棄済みの Actor へ非同期処理を積もうとしても、即座に終わります。
+
+トークンは使われたときだけ確保されるので、非同期を使わない Actor に負担はありません。
+
 ### コールバックが例外を投げた場合
 
 `OnTick` / `OnEndPlay` / `OnDispose` が例外を投げても、配送は途中で打ち切られません。
