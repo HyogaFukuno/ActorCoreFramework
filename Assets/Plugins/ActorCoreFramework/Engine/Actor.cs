@@ -33,8 +33,15 @@ namespace ActorCoreFramework
         /// </summary>
         CancellationTokenSource? cts;
 
+        /// <summary>
+        /// BindToで紐づけられた寿命。BeginPlayまで購読を待つため、ここで控えておく。
+        /// </summary>
+        CancellationToken boundToken;
+        CancellationTokenRegistration boundRegistration;
+
         string? name;
         bool ticking;
+        bool bound;
         bool hasPendingRemoval;
 
         /// <summary>
@@ -215,6 +222,58 @@ namespace ActorCoreFramework
         }
 
 
+        // --- 寿命の紐づけ ---
+
+        /// <summary>
+        /// ActorExtensions.BindToの実体。呼び出し口を拡張メソッドに置くのは、
+        /// world.Spawn(...).BindTo(token)で具象型を保ったまま繋げられるようにするため。
+        /// </summary>
+        internal void BindToLifetime(CancellationToken token)
+        {
+            if (State is ActorState.Ended or ActorState.Disposed)
+            {
+                throw new InvalidOperationException($"Cannot bind a {State} actor to a lifetime.");
+            }
+
+            if (bound)
+            {
+                throw new InvalidOperationException(
+                    $"{this} is already bound to a lifetime. To bind to more than one, " +
+                    $"combine them with {nameof(CancellationTokenSource)}.CreateLinkedTokenSource.");
+            }
+
+            bound = true;
+            boundToken = token;
+
+            // BeginPlay前なら購読はDispatchBeginPlayに任せる。
+            // Worldが決まる前に発火しても、破棄を予約する先がない。
+            if (State == ActorState.Playing) { SubscribeBoundLifetime(); }
+        }
+
+        void SubscribeBoundLifetime()
+        {
+            // 既にキャンセル済みのトークンなら、Registerはその場でコールバックを実行する。
+            // ここへ来る時点でWorldとStateは確定しているので、即Destroyされても
+            // 通常の破棄予約として正しく受け付けられる。
+            // クロージャを作らないよう、状態はstate引数で渡す。
+            boundRegistration = boundToken.Register(static state =>
+            {
+                var actor = (Actor)state!;
+
+                // Worldが未登録でも破棄済みでも、Destroy側が黙って無視する
+                actor.World?.Destroy(actor);
+            }, this);
+        }
+
+        void UnsubscribeBoundLifetime()
+        {
+            // 購読を残すと、トークン側がコールバック経由でActorを掴み続ける。
+            // 紐づけ先のGameObjectが生きている限り解放されない。
+            boundRegistration.Dispose();
+            boundRegistration = default;
+        }
+
+
         // --- Worldからのみ駆動される ---
 
         internal void DispatchBeginPlay(World world)
@@ -234,6 +293,12 @@ namespace ActorCoreFramework
             }
 
             OnBeginPlay();
+
+            // 購読はActor自身の初期化を終えてから。
+            // 紐づけ先が既に死んでいる場合、Registerはその場でDestroyを走らせる。
+            // 初期化の途中で破棄予約が入らないよう、最後に回す。
+            // OnBeginPlayが例外で抜けた場合は購読せず、そのままRegisterのロールバックへ。
+            if (bound) { SubscribeBoundLifetime(); }
         }
 
         /// <summary>
@@ -257,6 +322,10 @@ namespace ActorCoreFramework
             // Cancelは購読側のコールバックをその場で走らせるので、他と同じく捕捉する。
             try { cts?.Cancel(); }
             catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
+
+            // 紐づけ先より先に死ぬ場合、購読を残すとActorが掴まれ続ける
+            try { UnsubscribeBoundLifetime(); }
+            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
 
             try { OnEndPlay(reason); }
             catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
@@ -351,6 +420,10 @@ namespace ActorCoreFramework
             components.Clear();
 
             try { OnDispose(); }
+            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+
+            // EndPlayを経ずにここへ来る経路のための保険。二度目の解除は何もしない
+            try { UnsubscribeBoundLifetime(); }
             catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
 
             // Registerのロールバックなど、EndPlayを経ずにここへ来る経路がある。

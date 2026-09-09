@@ -5,6 +5,26 @@
 書式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に、
 バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### 追加
+
+- `Actor.BindTo(CancellationToken)` を追加しました。Actor の寿命を任意の
+  `CancellationToken` の寿命に紐づけ、キャンセルされた時点で `World.Destroy` を予約します。
+
+  Actor は GameObject の寿命から独立しているため、GameObject を壊しても World は
+  自動では気付かず、壊れた `Transform` を持つ Pawn が Tick され続けていました。
+  MonoBehaviour の `destroyCancellationToken` を渡すことで、その 2 つを結び直せます。
+  破棄が予約された時点で Tick の配送が止まるので、壊れた GameObject を掴んだまま
+  Tick されることはありません。
+
+  紐づけ先は MonoBehaviour に限りません。他の Actor の `DestroyToken` を渡せば
+  「親が死んだら子も畳む」も同じ形で書けます。
+
+  購読は `BeginPlay` で始まり `EndPlay` で解除されるため、Actor が先に死んだ場合に
+  紐づけ先が Actor を掴み続けることはありません。
+  戻り値は Actor 自身なので、`world.Spawn(...).BindTo(token)` と繋げられます。
+
 ## [2.1.0] - 2026-09-09
 
 ### 追加
