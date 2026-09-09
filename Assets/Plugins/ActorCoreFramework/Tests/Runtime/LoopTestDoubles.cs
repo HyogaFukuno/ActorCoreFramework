@@ -62,7 +62,10 @@ namespace ActorCoreFramework.PlayModeTests
     /// <summary>MonoBehaviourの各フェーズを同じログへ記録し、Actorとの前後関係を見る。</summary>
     internal sealed class PhaseProbeBehaviour : MonoBehaviour
     {
-        public CallLog? Log;
+        // テストから実行時に差し込むだけで、Inspectorからは設定しない。
+        // publicフィールドはUnityのシリアライズ対象になるため、
+        // 対象外であることを明示しないとUAC1001の警告になる。
+        [NonSerialized] public CallLog? Log;
 
         void FixedUpdate() => Log?.Add("mb.FixedUpdate");
         void Update() => Log?.Add("mb.Update");

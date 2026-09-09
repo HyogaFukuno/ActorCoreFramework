@@ -5,6 +5,23 @@
 書式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に、
 バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### 追加
+
+- `Actor.DestroyToken` を追加しました。Actor の寿命に紐づく `CancellationToken` で、
+  `EndPlay` の入口、派生クラスの `OnEndPlay` より前に発火します。
+  非同期処理にこれを渡すことで、Actor が破棄された後も継続が走り、
+  `World` の管理外から破棄済みの Actor を触る事故を防げます。
+
+  キャンセルは協調的なので、`EndPlay` の完了と非同期処理の停止は同期しません。
+  継続の再開後は `IsPlaying` などで生存を確認してください。
+  また `OnEndPlay` は同期的に完結する契約のため、`await` はできません。
+
+  トークンは使われたときだけ確保するので、非同期を使わない Actor に負担はありません。
+  `EndPlay` 後に取得した場合は、最初からキャンセル済みのトークンを返します。
+  非同期ライブラリへの依存は追加していません。
+
 ## [2.0.0] - 2026-09-09
 
 ### 破壊的変更

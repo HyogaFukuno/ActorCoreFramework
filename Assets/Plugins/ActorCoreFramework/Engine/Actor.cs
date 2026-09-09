@@ -27,6 +27,12 @@ namespace ActorCoreFramework
 
         readonly List<ActorComponent> components = new();
 
+        /// <summary>
+        /// DestroyTokenの発生源。使われたときだけ確保する。
+        /// 非同期を使わないActorに、生成のたびの確保と破棄を負担させない。
+        /// </summary>
+        CancellationTokenSource? cts;
+
         string? name;
         bool ticking;
         bool hasPendingRemoval;
@@ -65,6 +71,35 @@ namespace ActorCoreFramework
         /// 実際に除去されるまでの間ここに残る。IsPendingRemovalで判別できる。
         /// </summary>
         public IReadOnlyList<ActorComponent> Components => components;
+
+        /// <summary>
+        /// このActorの寿命に紐づくCancellationToken。EndPlayの入口で発火する。
+        /// 非同期処理には必ずこれを渡すこと。渡さないと、Actorが破棄された後も
+        /// 継続が走り、Worldの管理外から破棄済みのActorを触ることになる。
+        ///
+        /// キャンセルは協調的なので、EndPlayの完了と非同期処理の停止は同期しない。
+        /// 走り出している継続は再開しうるため、再開後は必ず生存を確認すること。
+        /// <code>
+        /// token.ThrowIfCancellationRequested();
+        /// if (!IsPlaying) { return; }
+        /// </code>
+        ///
+        /// EndPlay後に取得した場合は、最初からキャンセル済みのトークンを返す。
+        /// 破棄済みのActorへ非同期処理を積もうとしても、即座に終わるようにするため。
+        /// </summary>
+        /// <remarks>メインスレッドからのみ取得すること。</remarks>
+        public CancellationToken DestroyToken
+        {
+            get
+            {
+                if (State is ActorState.Ended or ActorState.Disposed)
+                {
+                    return new CancellationToken(canceled: true);
+                }
+
+                return (cts ??= new CancellationTokenSource()).Token;
+            }
+        }
 
 
         // --- Component ---
@@ -217,8 +252,14 @@ namespace ActorCoreFramework
 
             ExceptionDispatchInfo? failure = null;
 
-            try { OnEndPlay(reason); }
+            // 派生クラスの後始末より先に、非同期処理へ停止を通知する。
+            // OnEndPlayが解放する資源を、まだ動いている継続に触らせないため。
+            // Cancelは購読側のコールバックをその場で走らせるので、他と同じく捕捉する。
+            try { cts?.Cancel(); }
             catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
+
+            try { OnEndPlay(reason); }
+            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
 
             // 合成と逆順に解除する
             for (var i = components.Count - 1; i >= 0; i--)
@@ -311,6 +352,18 @@ namespace ActorCoreFramework
 
             try { OnDispose(); }
             catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+
+            // Registerのロールバックなど、EndPlayを経ずにここへ来る経路がある。
+            // どの経路で死んでもトークンは必ず発火させる。二度目のCancelは何もしない。
+            if (cts != null)
+            {
+                try { cts.Cancel(); }
+                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+
+                // ComponentやOnDisposeがトークンを購読解除できるよう、解放は最後
+                cts.Dispose();
+                cts = null;
+            }
 
             // ComponentやOnDisposeからWorldを参照できるよう、参照を切るのは最後
             World = null;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using NUnit.Framework;
 
 namespace ActorCoreFramework.Tests
@@ -385,6 +386,116 @@ namespace ActorCoreFramework.Tests
 
             Assert.That(actor.GetComponents(results), Is.EqualTo(1));
             Assert.That(results, Is.EqualTo(new[] { first }));
+        }
+
+        // --- DestroyToken ---
+
+        [Test]
+        public void DestroyToken_IsNotCanceledWhilePlaying()
+        {
+            var actor = world.Register(new TestActor());
+
+            Assert.That(actor.DestroyToken.IsCancellationRequested, Is.False);
+            Assert.That(actor.DestroyToken.CanBeCanceled, Is.True);
+        }
+
+        [Test]
+        public void DestroyToken_IsCanceledWhenTheActorIsDestroyed()
+        {
+            var actor = world.Register(new TestActor());
+            var token = actor.DestroyToken;
+
+            world.Destroy(actor);
+            Assert.That(token.IsCancellationRequested, Is.False, "破棄予約だけでは発火しない");
+
+            world.PostTick(0.016f);
+
+            Assert.That(token.IsCancellationRequested, Is.True);
+        }
+
+        [Test]
+        public void DestroyToken_IsCanceledOnWorldShutdown()
+        {
+            var actor = world.Register(new TestActor());
+            var token = actor.DestroyToken;
+
+            world.Dispose();
+
+            Assert.That(token.IsCancellationRequested, Is.True);
+        }
+
+        [Test]
+        public void DestroyToken_IsAlreadyCanceledInsideOnEndPlay()
+        {
+            var canceledInEndPlay = false;
+            var actor = world.Register(new TestActor
+            {
+                EndPlayAction = self => canceledInEndPlay = self.DestroyToken.IsCancellationRequested
+            });
+
+            // OnEndPlayが資源を解放する時点で、非同期側は既に停止を通知されている
+            _ = actor.DestroyToken;
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+
+            Assert.That(canceledInEndPlay, Is.True);
+        }
+
+        [Test]
+        public void DestroyToken_IsAlreadyCanceledWhenTakenAfterEndPlay()
+        {
+            var actor = world.Register(new TestActor());
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+
+            // 破棄済みActorへ非同期処理を積もうとしても、即座に終わるようにする
+            Assert.That(actor.DestroyToken.IsCancellationRequested, Is.True);
+        }
+
+        [Test]
+        public void DestroyToken_FiresRegisteredCallbacks()
+        {
+            var actor = world.Register(new TestActor());
+            var fired = 0;
+            using var registration = actor.DestroyToken.Register(() => fired++);
+
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+
+            Assert.That(fired, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void DestroyToken_IsCanceledWhenRegistrationRollsBack()
+        {
+            // BeginPlayが失敗したActorはEndPlayを経ずにDisposeされる。
+            // その経路でもトークンは発火させる。
+            CancellationToken token = default;
+            var actor = new TestActor
+            {
+                BeginPlayAction = self =>
+                {
+                    token = self.DestroyToken;
+                    throw new InvalidOperationException("boom");
+                }
+            };
+
+            Assert.Throws<InvalidOperationException>(() => world.Register(actor));
+
+            Assert.That(token.IsCancellationRequested, Is.True);
+        }
+
+        [Test]
+        public void DestroyToken_IsNotAllocatedUntilItIsUsed()
+        {
+            // 使わないActorに確保と破棄の負担をかけないための遅延生成。
+            // 一度も触らずに破棄しても壊れないことを確認する。
+            var actor = world.Register(new TestActor());
+
+            world.Destroy(actor);
+            Assert.DoesNotThrow(() => world.PostTick(0.016f));
+
+            Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
         }
     }
 }
