@@ -211,6 +211,43 @@ TickGroup と、1 フレーム内での実行順は次のとおりです。
 
 `EndPlayReason` は `Destroyed`（`World.Destroy` による破棄）と `WorldShutdown`（`World.Dispose` による破棄）を区別します。
 
+### GameObject の寿命と紐づける
+
+Actor は GameObject の寿命から独立しているため、**GameObject を壊しても World は自動では気付きません。**
+壊れた `Transform` を持つ Pawn が登録されたまま Tick され続け、`Position` に触れた時点で
+`MissingReferenceException` になります。`Object.Destroy` は実際の破棄をフレーム末尾まで遅らせるので、
+壊れるのは次のフレームからです。
+
+`BindTo` で 2 つの寿命を結び直せます。
+
+```csharp
+void Awake()
+{
+    world = new World();
+
+    // このGameObjectが壊れたら、PawnもWorldから畳まれる
+    var pawn = world.Spawn(() => new PlayerCharacter(transform, rigidbody, collider))
+                    .BindTo(destroyCancellationToken);
+
+    world.Spawn(() => new PlayerController(pawn, moveAction));
+    loop = WorldLoop.Register(world);
+}
+```
+
+キャンセルされた時点で `World.Destroy` が予約され、**その瞬間に Tick の配送が止まります**。
+壊れた GameObject を掴んだまま Tick されることはありません。
+
+紐づけ先は MonoBehaviour に限りません。シーンのアンロードや他の Actor の `DestroyToken` を渡せば、
+「親が死んだら子も畳む」も同じ形で書けます。
+
+```csharp
+world.Spawn(() => new Weapon(...)).BindTo(owner.DestroyToken);
+```
+
+購読は `BeginPlay` で始まり、`EndPlay` で解除されます。Actor が先に死んだ場合も購読は残らないため、
+紐づけ先が Actor を掴み続けることはありません。
+複数の寿命に紐づけたい場合は `CancellationTokenSource.CreateLinkedTokenSource` でまとめてください。
+
 ### 非同期処理
 
 `Actor.DestroyToken` は Actor の寿命に紐づく `CancellationToken` です。`EndPlay` の入口、

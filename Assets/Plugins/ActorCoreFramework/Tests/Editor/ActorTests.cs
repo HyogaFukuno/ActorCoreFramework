@@ -497,5 +497,142 @@ namespace ActorCoreFramework.Tests
 
             Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
         }
+
+        // --- BindTo ---
+
+        [Test]
+        public void BindTo_DestroysTheActorWhenTheLifetimeEnds()
+        {
+            using var lifetime = new CancellationTokenSource();
+            var actor = world.Register(new TestActor()).BindTo(lifetime.Token);
+
+            lifetime.Cancel();
+
+            // 破棄は予約されるだけ。実際の破棄はPostTickの末尾
+            Assert.That(actor.IsPendingDestroy, Is.True);
+            Assert.That(actor.State, Is.EqualTo(ActorState.Playing));
+
+            world.PostTick(0.016f);
+
+            Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
+        }
+
+        [Test]
+        public void BindTo_StopsTickImmediatelyWithoutWaitingForTheFlush()
+        {
+            using var lifetime = new CancellationTokenSource();
+            var actor = new TestActor();
+            actor.PrimaryActorTick.CanEverTick = true;
+            world.Register(actor).BindTo(lifetime.Token);
+
+            world.Tick(0.016f);
+            Assert.That(actor.TickCount, Is.EqualTo(1));
+
+            // 紐づけ先が壊れた時点でTickが止まらないと、
+            // 破棄済みのGameObjectを掴んだままTickされる
+            lifetime.Cancel();
+
+            world.Tick(0.016f);
+            Assert.That(actor.TickCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void BindTo_ReturnsTheActorWithItsConcreteType()
+        {
+            using var lifetime = new CancellationTokenSource();
+
+            // 生成にそのまま繋げられること(具象型が保たれること)
+            TestActor actor = world.Register(new TestActor()).BindTo(lifetime.Token);
+
+            Assert.That(actor.State, Is.EqualTo(ActorState.Playing));
+        }
+
+        [Test]
+        public void BindTo_BeforeRegistrationSubscribesAtBeginPlay()
+        {
+            using var lifetime = new CancellationTokenSource();
+            var actor = new TestActor().BindTo(lifetime.Token);
+
+            // World未登録なら破棄を予約する先がない。購読はBeginPlayまで待つ
+            lifetime.Cancel();
+            Assert.That(actor.IsPendingDestroy, Is.False);
+            Assert.That(actor.State, Is.EqualTo(ActorState.Created));
+        }
+
+        [Test]
+        public void BindTo_WithAnAlreadyCanceledLifetimeDestroysOnRegistration()
+        {
+            using var lifetime = new CancellationTokenSource();
+            lifetime.Cancel();
+
+            // 既に壊れたGameObjectに対してActorを生成した場合。
+            // Registerがその場でコールバックを走らせる
+            var actor = world.Register(new TestActor()).BindTo(lifetime.Token);
+
+            Assert.That(actor.BeginPlayCount, Is.EqualTo(1), "BeginPlayは配送される");
+            Assert.That(actor.IsPendingDestroy, Is.True);
+
+            world.PostTick(0.016f);
+            Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
+        }
+
+        [Test]
+        public void BindTo_UnsubscribesWhenTheActorDiesFirst()
+        {
+            using var lifetime = new CancellationTokenSource();
+            var actor = world.Register(new TestActor()).BindTo(lifetime.Token);
+
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+            Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
+
+            // 購読が残っているとトークン側がActorを掴み続ける。
+            // 解除されていれば、後からキャンセルされても何も起きない
+            Assert.DoesNotThrow(() => lifetime.Cancel());
+            Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
+        }
+
+        [Test]
+        public void BindTo_IsSafeWhenTheWorldIsDisposedFirst()
+        {
+            using var lifetime = new CancellationTokenSource();
+            world.Register(new TestActor()).BindTo(lifetime.Token);
+
+            // シーンのアンロードでは破棄順が保証されない。
+            // Worldが先に畳まれた後にGameObjectが壊れても壊れないこと
+            world.Dispose();
+
+            Assert.DoesNotThrow(() => lifetime.Cancel());
+        }
+
+        [Test]
+        public void BindTo_RejectsASecondBinding()
+        {
+            using var first = new CancellationTokenSource();
+            using var second = new CancellationTokenSource();
+            var actor = world.Register(new TestActor()).BindTo(first.Token);
+
+            Assert.Throws<InvalidOperationException>(() => actor.BindTo(second.Token));
+        }
+
+        [Test]
+        public void BindTo_RejectsAnEndedActor()
+        {
+            using var lifetime = new CancellationTokenSource();
+            var actor = world.Register(new TestActor());
+
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+
+            Assert.Throws<InvalidOperationException>(() => actor.BindTo(lifetime.Token));
+        }
+
+        [Test]
+        public void BindTo_ThrowsOnNullActor()
+        {
+            TestActor? actor = null;
+
+            Assert.Throws<ArgumentNullException>(() => actor!.BindTo(CancellationToken.None));
+        }
     }
 }
