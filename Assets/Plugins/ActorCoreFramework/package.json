@@ -3,7 +3,7 @@
     "displayName": "Actor Core Framework",
     "description": "Unreal EngineのActor / Pawn / Controllerの設計をUnityに持ち込むゲームプレイフレームワーク。ActorはMonoBehaviourではない純粋なC#オブジェクトで、GameObjectの寿命から独立して寿命と実行順を設計できる。",
     "author": { "name": "Hyouga", "url": "https://x.com/HyougaDev" },
-    "version": "2.1.0",
+    "version": "2.2.0",
     "unity": "6000.5",
     "license": "MIT",
     "category": "Framework",

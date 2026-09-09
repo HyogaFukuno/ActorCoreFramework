@@ -22,10 +22,10 @@ Unity 6000.5 以降 / C# 9
 Package Manager の **Add package from git URL** に以下を入力します。
 
 ```
-https://github.com/HyogaFukuno/ActorCoreFramework.git?path=/Assets/Plugins/ActorCoreFramework#v2.1.0
+https://github.com/HyogaFukuno/ActorCoreFramework.git?path=/Assets/Plugins/ActorCoreFramework#v2.2.0
 ```
 
-末尾の `#v2.1.0` がバージョンの指定です。省略すると `main` の先端を取得するため、
+末尾の `#v2.2.0` がバージョンの指定です。省略すると `main` の先端を取得するため、
 破壊的変更が入ったときに、こちらの都合と関係なくそれが降ってきます。
 更新のタイミングは自分で選べるよう、タグを指定することをおすすめします。
 
