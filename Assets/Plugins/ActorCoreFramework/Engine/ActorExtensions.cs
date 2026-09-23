@@ -20,6 +20,10 @@ namespace ActorCoreFramework
         /// 紐づけ先はMonoBehaviourに限らない。シーンのアンロードや、
         /// 他のActorのDestroyTokenを渡せば「親が死んだら子も畳む」も同じ形で書ける。
         ///
+        /// トークンは別スレッドからキャンセルされてもよい(CancelAfterなど)。
+        /// その場合の破棄予約は、次にWorldのTickが回った冒頭で行われる。
+        /// Worldを所有するスレッドからのキャンセルなら、その場で予約される。
+        ///
         /// 購読はBeginPlayで始まり、EndPlayで解除される。BeginPlay前に呼んだ場合は
         /// 登録時まで待つので、Worldへ登録しないまま購読が残ることはない。
         /// 破棄が予約された時点でTickの配送は止まるため、

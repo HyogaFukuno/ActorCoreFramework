@@ -31,7 +31,10 @@ namespace ActorCoreFramework.Samples
             if (TryGetControlledPawn(out var pawn))
             {
                 // Controllerは「意図」を渡すだけ。移動ロジックはPawn側が持つ。
-                pawn.AddMovementInput(moveAction.ReadValue<Vector2>());
+                // 入力空間(スティックのx, y)からワールド空間(水平面のx, z)への変換はここで済ませ、
+                // Pawnへは契約どおりワールド空間の方向を渡す。
+                var input = moveAction.ReadValue<Vector2>();
+                pawn.AddMovementInput(new Vector3(input.x, 0.0f, input.y));
             }
         }
 

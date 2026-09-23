@@ -18,7 +18,7 @@ namespace ActorCoreFramework.Samples
 
         public override void AddMovementInput(Vector3 worldDirection, float scaleValue = 1.0f)
         {
-            movement.AddInput((Vector2)worldDirection * scaleValue);
+            movement.AddInput(worldDirection * scaleValue);
         }
 
         protected override void OnDispose()

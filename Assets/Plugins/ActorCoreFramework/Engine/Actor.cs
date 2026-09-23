@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.ExceptionServices;
 using System.Threading;
 
 namespace ActorCoreFramework
@@ -40,9 +39,14 @@ namespace ActorCoreFramework
         CancellationTokenRegistration boundRegistration;
 
         string? name;
-        bool ticking;
         bool bound;
         bool hasPendingRemoval;
+
+        /// <summary>
+        /// Componentの除去を遅らせている区間の深さ。Componentの一覧を添字で回している間は
+        /// 除去をその場で反映させず、区間を抜けてからまとめて反映する。
+        /// </summary>
+        int deferRemovalDepth;
 
         /// <summary>
         /// プロセス内で一意な識別子。生成順に1から発番される。
@@ -139,44 +143,67 @@ namespace ActorCoreFramework
 
         /// <summary>
         /// Componentを取り外して破棄する。Actorが再生中なら、その場でEndPlayが配送される。
-        /// Tick中に呼んだ場合、実際の除去はそのTickが終わってから行われる。
+        /// Tick中や、ComponentへのEndPlay配送中に呼んだ場合、実際の除去はその配送が終わってから行われる。
         /// </summary>
-        /// <returns>取り外しを受け付けたならtrue。nullや所有者違い、予約済みならfalse。</returns>
+        /// <returns>
+        /// 取り外しを受け付けたならtrue。nullや所有者違い、予約済み、所有者が破棄済みならfalse。
+        /// </returns>
         protected bool RemoveComponent(ActorComponent? component)
         {
             if (component == null) { return false; }
             if (!ReferenceEquals(component.Owner, this)) { return false; }
             if (component.IsPendingRemoval) { return false; }
 
+            // 破棄済みのActorはComponentを既に解放し終えている。取り外すものが残っていない
+            if (State == ActorState.Disposed) { return false; }
+
             component.IsPendingRemoval = true;
             hasPendingRemoval = true;
 
-            // Tick中はDispatchTickの添字が飛ばないよう、除去をTickの完了まで遅らせる
-            if (!ticking) { FlushPendingRemoval(); }
+            // Componentを添字で回している間は、添字が飛ばないよう除去をその完了まで遅らせる
+            if (deferRemovalDepth == 0) { FlushPendingRemoval(); }
 
             return true;
         }
 
         void FlushPendingRemoval()
         {
-            // 除去に伴うEndPlayから更にRemoveComponentが呼ばれても取りこぼさない
-            while (hasPendingRemoval)
+            // 1つの後始末の失敗で、残りのComponentが取り外されないまま残らないようにする
+            var failures = new FailureCollector();
+
+            // 除去に伴うEndPlayから更にRemoveComponentが呼ばれても、
+            // その場では反映させずに次の周で拾う。この周の添字を飛ばさないため。
+            deferRemovalDepth++;
+
+            try
             {
-                hasPendingRemoval = false;
-
-                for (var i = components.Count - 1; i >= 0; i--)
+                while (hasPendingRemoval)
                 {
-                    var component = components[i];
-                    if (!component.IsPendingRemoval) { continue; }
+                    hasPendingRemoval = false;
 
-                    components.RemoveAt(i);
+                    for (var i = components.Count - 1; i >= 0; i--)
+                    {
+                        var component = components[i];
+                        if (!component.IsPendingRemoval) { continue; }
 
-                    // BeginPlayを受け取っているかはComponent自身が持つ。
-                    // 所有者のEndPlay中に取り外された場合でも対のEndPlayが届く。
-                    component.DispatchEndPlay(EndPlayReason.Destroyed);
-                    component.Dispose();
+                        components.RemoveAt(i);
+
+                        // BeginPlayを受け取っているかはComponent自身が持つ。
+                        // 所有者のEndPlay中に取り外された場合でも対のEndPlayが届く。
+                        try { component.DispatchEndPlay(EndPlayReason.Destroyed); }
+                        catch (Exception e) { failures.Add(e); }
+
+                        try { component.Dispose(); }
+                        catch (Exception e) { failures.Add(e); }
+                    }
                 }
             }
+            finally
+            {
+                deferRemovalDepth--;
+            }
+
+            failures.ThrowIfAny();
         }
 
         /// <summary>
@@ -260,8 +287,11 @@ namespace ActorCoreFramework
             {
                 var actor = (Actor)state!;
 
-                // Worldが未登録でも破棄済みでも、Destroy側が黙って無視する
-                actor.World?.Destroy(actor);
+                // トークンはどのスレッドからでもキャンセルされうる(CancelAfterのタイマーなど)。
+                // Worldの状態はスレッドセーフではないので、別スレッドからの要求は
+                // World側で所有スレッドへ受け渡してから処理させる。
+                // Worldが未登録でも破棄済みでも、World側が黙って無視する。
+                actor.World?.DestroyFromLifetime(actor);
             }, this);
         }
 
@@ -315,39 +345,58 @@ namespace ActorCoreFramework
 
             State = ActorState.Ended;
 
-            ExceptionDispatchInfo? failure = null;
+            var failures = new FailureCollector();
 
             // 派生クラスの後始末より先に、非同期処理へ停止を通知する。
             // OnEndPlayが解放する資源を、まだ動いている継続に触らせないため。
             // Cancelは購読側のコールバックをその場で走らせるので、他と同じく捕捉する。
             try { cts?.Cancel(); }
-            catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
+            catch (Exception e) { failures.Add(e); }
 
             // 紐づけ先より先に死ぬ場合、購読を残すとActorが掴まれ続ける
             try { UnsubscribeBoundLifetime(); }
-            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+            catch (Exception e) { failures.Add(e); }
+
+            try { OnInternalPreEndPlay(); }
+            catch (Exception e) { failures.Add(e); }
 
             try { OnEndPlay(reason); }
-            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+            catch (Exception e) { failures.Add(e); }
 
-            // 合成と逆順に解除する
-            for (var i = components.Count - 1; i >= 0; i--)
+            // 合成と逆順に解除する。
+            // ComponentのEndPlayから他のComponentが取り外されても添字が飛ばないよう、
+            // 除去は回し終えてから反映する。取り外されたComponentにもこの周でEndPlayは届く。
+            deferRemovalDepth++;
+            try
             {
-                try { components[i].DispatchEndPlay(reason); }
-                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+                for (var i = components.Count - 1; i >= 0; i--)
+                {
+                    try { components[i].DispatchEndPlay(reason); }
+                    catch (Exception e) { failures.Add(e); }
+                }
+            }
+            finally
+            {
+                deferRemovalDepth--;
+            }
+
+            if (deferRemovalDepth == 0)
+            {
+                try { FlushPendingRemoval(); }
+                catch (Exception e) { failures.Add(e); }
             }
 
             try { OnInternalEndPlay(reason); }
-            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+            catch (Exception e) { failures.Add(e); }
 
-            failure?.Throw();
+            failures.ThrowIfAny();
         }
 
         internal void DispatchTick(float deltaTime)
         {
             if (State != ActorState.Playing) { return; }
 
-            ticking = true;
+            deferRemovalDepth++;
 
             try
             {
@@ -366,8 +415,8 @@ namespace ActorCoreFramework
             finally
             {
                 // Tickが例外で抜けても、予約された除去は必ず反映してから戻る
-                ticking = false;
-                FlushPendingRemoval();
+                deferRemovalDepth--;
+                if (deferRemovalDepth == 0) { FlushPendingRemoval(); }
             }
         }
 
@@ -377,6 +426,13 @@ namespace ActorCoreFramework
         /// アセンブリ外からはオーバーライドできない。
         /// </summary>
         internal virtual void OnInternalBeginPlay() { }
+
+        /// <summary>
+        /// フレームワーク内部の後始末のうち、派生クラスのOnEndPlayより先に済ませるもの。
+        /// 派生クラスやComponentの後片付けが終わった後では都合の悪い通知をここで行う。
+        /// DestroyTokenの発火と寿命の紐づけの解除は、これより前に済んでいる。
+        /// </summary>
+        internal virtual void OnInternalPreEndPlay() { }
 
         /// <summary>
         /// フレームワーク内部の後始末。派生クラスのOnEndPlayより後に呼ばれる。
@@ -401,13 +457,13 @@ namespace ActorCoreFramework
             if (State == ActorState.Disposed) { return; }
 
             // DispatchEndPlayと同様、途中で例外が出ても解放は最後まで進める
-            ExceptionDispatchInfo? failure = null;
+            var failures = new FailureCollector();
 
             // World.Dispose経由など、EndPlayを経ていない場合に備える
             if (State == ActorState.Playing)
             {
                 try { DispatchEndPlay(EndPlayReason.Destroyed); }
-                catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
+                catch (Exception e) { failures.Add(e); }
             }
 
             State = ActorState.Disposed;
@@ -415,23 +471,23 @@ namespace ActorCoreFramework
             for (var i = components.Count - 1; i >= 0; i--)
             {
                 try { components[i].Dispose(); }
-                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+                catch (Exception e) { failures.Add(e); }
             }
             components.Clear();
 
             try { OnDispose(); }
-            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+            catch (Exception e) { failures.Add(e); }
 
             // EndPlayを経ずにここへ来る経路のための保険。二度目の解除は何もしない
             try { UnsubscribeBoundLifetime(); }
-            catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+            catch (Exception e) { failures.Add(e); }
 
             // Registerのロールバックなど、EndPlayを経ずにここへ来る経路がある。
             // どの経路で死んでもトークンは必ず発火させる。二度目のCancelは何もしない。
             if (cts != null)
             {
                 try { cts.Cancel(); }
-                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+                catch (Exception e) { failures.Add(e); }
 
                 // ComponentやOnDisposeがトークンを購読解除できるよう、解放は最後
                 cts.Dispose();
@@ -441,7 +497,7 @@ namespace ActorCoreFramework
             // ComponentやOnDisposeからWorldを参照できるよう、参照を切るのは最後
             World = null;
 
-            failure?.Throw();
+            failures.ThrowIfAny();
         }
 
 
