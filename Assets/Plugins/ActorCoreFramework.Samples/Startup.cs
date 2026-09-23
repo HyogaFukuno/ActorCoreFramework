@@ -17,10 +17,21 @@ namespace ActorCoreFramework.Samples
         {
             world = new World();
 
-            var pawn = world.Spawn(() => new DummyCharacter(transform, rigidbody, collider));
-            world.Spawn(() => new PlayerController(pawn, moveAction));
-            
-            loop = WorldLoop.Register(world);
+            try
+            {
+                var pawn = world.Spawn(() => new DummyCharacter(transform, rigidbody, collider));
+                world.Spawn(() => new PlayerController(pawn, moveAction));
+
+                loop = WorldLoop.Register(world);
+            }
+            catch
+            {
+                // 途中まで作ったWorldをここで畳む。
+                // Awakeが例外で抜けたときにOnDestroyが呼ばれるかどうかに頼らない
+                world.Dispose();
+                world = null;
+                throw;
+            }
         }
 
         void OnDestroy()

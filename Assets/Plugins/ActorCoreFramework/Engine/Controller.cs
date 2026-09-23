@@ -57,8 +57,9 @@ namespace ActorCoreFramework
         /// Possess状態の整合を保つため非virtual。差し替えに反応したい場合は
         /// Pawn側のOnPossessed / OnUnpossessedを使うこと。
         ///
-        /// 破棄済み、または破棄が予約されたPawnを渡した場合はnullを渡したものとして扱い、
-        /// 現在のPawnの解除だけが行われる。BeginPlay前に渡したPawnがその後破棄された場合も同様。
+        /// 破棄済み、破棄が予約された、または別のWorldに登録されたPawnを渡した場合は
+        /// nullを渡したものとして扱い、現在のPawnの解除だけが行われる。
+        /// BeginPlay前に渡したPawnがその後破棄された場合も同様。
         /// </summary>
         public void SwitchControlledPawn(TPawn? pawn)
         {
@@ -89,9 +90,22 @@ namespace ActorCoreFramework
         ///
         /// World未登録(Created)のPawnは許す。まだ死んでいないだけで、
         /// 後から登録されればBeginPlayが届き、破棄されればEndPlayで参照も切られる。
+        /// 登録先がこのControllerと別のWorldだった場合は、Pawn側のBeginPlayで解除される。
+        ///
+        /// 別のWorldに登録済みのPawnは対象外とする。Worldをまたいだ参照を許すと、
+        /// 片方のWorldだけが破棄されたときに、もう片方の破棄済みActorを掴み続ける。
         /// </summary>
-        static bool CanPossess(Pawn pawn) =>
-            pawn.State is ActorState.Created or ActorState.Playing && !pawn.IsPendingDestroy;
+        bool CanPossess(Pawn pawn)
+        {
+            if (pawn.IsPendingDestroy) { return false; }
+
+            return pawn.State switch
+            {
+                ActorState.Created => true,
+                ActorState.Playing => ReferenceEquals(pawn.World, World),
+                _ => false
+            };
+        }
 
         void Possess(TPawn? pawn)
         {

@@ -352,5 +352,45 @@ namespace ActorCoreFramework.Tests
             Assert.That(survivor.TickCount, Is.EqualTo(1));
             Assert.That(thrower.TickCount, Is.Zero);
         }
+
+
+        [Test]
+        public void Interval_DoesNotFireRightAfterBeingReenabled()
+        {
+            var actor = world.Register(Ticking("a", interval: 1.0f));
+
+            world.Tick(0.9f);
+            actor.PrimaryActorTick.Enabled = false;
+            world.Tick(5.0f);
+            actor.PrimaryActorTick.Enabled = true;
+
+            // 停止前や停止中の時間を貯めていると、再開直後にIntervalを待たずに発火する
+            world.Tick(0.1f);
+            Assert.That(actor.TickCount, Is.Zero);
+
+            world.Tick(0.9f);
+            Assert.That(actor.TickCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Tick_OrdersInterleavedPrioritiesByPriorityThenRegistration()
+        {
+            var priorities = new[] { 1, 0, 1, -1, 2, 0, -1, 1 };
+            for (var i = 0; i < priorities.Length; i++)
+            {
+                world.Register(Ticking($"a{i}", priority: priorities[i]));
+            }
+
+            log.Entries.Clear();
+            world.Tick(0.016f);
+
+            Assert.That(log.Entries, Is.EqualTo(new[]
+            {
+                "a3.Tick", "a6.Tick",
+                "a1.Tick", "a5.Tick",
+                "a0.Tick", "a2.Tick", "a7.Tick",
+                "a4.Tick"
+            }));
+        }
     }
 }

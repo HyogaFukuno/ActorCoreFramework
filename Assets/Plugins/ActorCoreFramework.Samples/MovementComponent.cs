@@ -22,7 +22,7 @@ namespace ActorCoreFramework.Samples
     {
         readonly Rigidbody rigidbody;
         readonly MovementSettings settings;
-        Vector2 inputDirection;
+        Vector3 inputDirection;
 
         public MovementComponent(Rigidbody rigidbody, in MovementSettings settings)
         {
@@ -31,21 +31,21 @@ namespace ActorCoreFramework.Samples
         }
 
         /// <summary>
-        /// 移動入力を加算する。Tickで消費されるまで蓄積される。
+        /// ワールド空間の移動入力を加算する。Tickで消費されるまで蓄積される。
         /// UEのAPawn::AddMovementInput()とConsumeMovementInputVector()の関係に倣う。
         /// </summary>
-        public void AddInput(Vector2 direction) => inputDirection += direction;
+        public void AddInput(Vector3 worldDirection) => inputDirection += worldDirection;
 
         protected override void OnTick(float deltaTime)
         {
+            // 鉛直方向は重力やジャンプの領分なので、入力のうち水平成分(xz)だけを使う。
             // 複数の入力源から積まれうるので、方向の大きさは1に丸める
-            var target = Vector2.ClampMagnitude(inputDirection, 1.0f) * settings.MaxSpeed;
-            inputDirection = Vector2.zero;
+            var horizontal = new Vector3(inputDirection.x, 0.0f, inputDirection.z);
+            var target = Vector3.ClampMagnitude(horizontal, 1.0f) * settings.MaxSpeed;
+            inputDirection = Vector3.zero;
 
-            // 入力は水平面(xz)へ割り当てる。
-            // 鉛直方向は重力やジャンプの領分なので上書きしない。
             var velocity = rigidbody.linearVelocity;
-            rigidbody.linearVelocity = new Vector3(target.x, velocity.y, target.y);
+            rigidbody.linearVelocity = new Vector3(target.x, velocity.y, target.z);
         }
     }
 }

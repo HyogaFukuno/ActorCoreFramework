@@ -259,5 +259,54 @@ namespace ActorCoreFramework.Tests
             Assert.That(pawn.State, Is.EqualTo(ActorState.Playing));
             Assert.That(controller.ControlledPawn, Is.SameAs(pawn));
         }
+
+
+        [Test]
+        public void DestroyingThePawn_UnpossessesBeforeItsEndPlay()
+        {
+            var pawn = world.Register(NewPawn());
+            world.Register(new TestController(pawn));
+
+            int? endPlayCountAtUnpossess = null;
+            pawn.UnpossessedAction = p => endPlayCountAtUnpossess = p.EndPlayCount;
+
+            world.Destroy(pawn);
+            world.PostTick(0.016f);
+
+            // 後片付けを終えたPawnへOnUnpossessedを届けない
+            Assert.That(endPlayCountAtUnpossess, Is.Zero);
+            Assert.That(pawn.EndPlayCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Possess_IgnoresAPawnInAnotherWorld()
+        {
+            using var otherWorld = new World();
+            var pawn = otherWorld.Register(NewPawn());
+
+            var controller = world.Register(new TestController(pawn));
+
+            Assert.That(controller.ControlledPawn, Is.Null);
+            Assert.That(pawn.Controller, Is.Null);
+            Assert.That(pawn.PossessedCount, Is.Zero);
+        }
+
+        [Test]
+        public void Possess_IsReleasedWhenAnUnregisteredPawnJoinsAnotherWorld()
+        {
+            using var otherWorld = new World();
+            var pawn = NewPawn();
+
+            // World未登録のPawnはPossessできる
+            var controller = world.Register(new TestController(pawn));
+            Assert.That(controller.ControlledPawn, Is.SameAs(pawn));
+
+            // その後Controllerと別のWorldへ登録されたら、Worldをまたいだ参照は残さない
+            otherWorld.Register(pawn);
+
+            Assert.That(controller.ControlledPawn, Is.Null);
+            Assert.That(pawn.Controller, Is.Null);
+            Assert.That(pawn.UnpossessedCount, Is.EqualTo(1));
+        }
     }
 }

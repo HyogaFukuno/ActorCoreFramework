@@ -1,12 +1,16 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
-using System.Runtime.ExceptionServices;
 
 namespace ActorCoreFramework
 {
     /// <summary>
     /// Actorの所有権、生成、破棄、Tickを扱うクラス。
+    ///
+    /// スレッドセーフではない。生成したスレッド(通常はUnityのメインスレッド)を所有スレッドとし、
+    /// すべての操作はそこから行うこと。例外はActor.BindToに渡したトークンのキャンセルで、
+    /// 別スレッドから発火しても所有スレッドへ受け渡してから処理する。
     /// </summary>
     public sealed class World : IDisposable
     {
@@ -25,9 +29,22 @@ namespace ActorCoreFramework
 
         readonly TickGroupList[] tickGroups = CreateTickGroups();
 
-        bool disposed;
+        /// <summary>
+        /// 所有スレッド以外から届いた破棄要求。所有スレッドのTickの冒頭で取り出して処理する。
+        /// </summary>
+        readonly ConcurrentQueue<Actor> crossThreadDestroyRequests = new();
+
+        readonly int ownerThreadId = Environment.CurrentManagedThreadId;
+
+        // 所有スレッド以外から読まれるのでvolatileにする
+        volatile bool disposed;
         bool ticking;
 
+        /// <summary>
+        /// 登録されているActor。破棄が予約されたActorや、PostTick末尾の破棄処理の最中にある
+        /// Actorも含む(破棄処理が終わった時点でまとめて取り除かれる)。
+        /// 生きているActorだけを扱いたい場合はGetActorsを使うこと。
+        /// </summary>
         public IReadOnlyList<Actor> Actors => actors;
 
 
@@ -68,8 +85,11 @@ namespace ActorCoreFramework
 
         /// <summary>
         /// 既に生成されたActorをWorldに登録させる。
+        /// BeginPlayが例外を投げた場合、登録は巻き戻されてActorは破棄され、例外はそのまま伝わる。
         /// </summary>
-        /// <exception cref="InvalidOperationException"></exception>
+        /// <exception cref="ArgumentNullException">actorがnull。</exception>
+        /// <exception cref="InvalidOperationException">actorが既に登録済みか破棄済み。</exception>
+        /// <exception cref="ObjectDisposedException">このWorldが破棄済み。</exception>
         public T Register<T>(T actor) where T : Actor
         {
             ThrowIfDisposed();
@@ -108,7 +128,9 @@ namespace ActorCoreFramework
                 // BeginPlayが失敗したActorをPlayingのまま残さない。
                 // 先に済ませたTickグループへの登録も巻き戻す。
                 UnregisterTick(actor);
-                actors.Remove(actor);
+
+                // 末尾付近にいるはずなので後ろから探す。BeginPlay中に更に登録された分だけ前にずれる
+                actors.RemoveAt(actors.LastIndexOf(actor));
                 actor.Dispose();
                 throw;
             }
@@ -159,6 +181,34 @@ namespace ActorCoreFramework
             pendingDestroy.Add(actor);
         }
 
+        /// <summary>
+        /// Actor.BindToで紐づけた寿命が尽きたときの破棄要求。
+        /// トークンはどのスレッドからでもキャンセルされうるので、所有スレッド以外からの要求は
+        /// キューへ積むだけにして、次に所有スレッドでTickが回った冒頭で受け付ける。
+        /// 所有スレッドからの要求は、これまでどおりその場でDestroyへ流す。
+        /// </summary>
+        internal void DestroyFromLifetime(Actor actor)
+        {
+            if (Environment.CurrentManagedThreadId == ownerThreadId)
+            {
+                Destroy(actor);
+                return;
+            }
+
+            if (disposed) { return; }
+
+            crossThreadDestroyRequests.Enqueue(actor);
+        }
+
+        void DrainCrossThreadDestroyRequests()
+        {
+            // Destroyは状態を確かめて黙って無視するので、その間に死んだActorが混ざっていてもよい
+            while (crossThreadDestroyRequests.TryDequeue(out var actor))
+            {
+                Destroy(actor);
+            }
+        }
+
         public void Tick(float deltaTime) => TickGroupCore(TickGroup.Tick, deltaTime);
         public void FixedTick(float deltaTime) => TickGroupCore(TickGroup.FixedTick, deltaTime);
 
@@ -178,24 +228,27 @@ namespace ActorCoreFramework
             ThrowIfTicking();
             ticking = true;
 
-            ExceptionDispatchInfo? failure = null;
+            var failures = new FailureCollector();
 
             try
             {
+                DrainCrossThreadDestroyRequests();
+
                 // Tickが例外で抜けても破棄予約は必ず処理する。
                 // ここを飛ばすと、Destroyされたはずの Actor が次フレームまで生き残る。
                 try { tickGroups[(int)TickGroup.PostTick].Tick(deltaTime); }
-                catch (Exception e) { failure = ExceptionDispatchInfo.Capture(e); }
+                catch (Exception e) { failures.Add(e); }
 
                 // 破棄もTickの一部とみなし、この間の再入を許さない
-                FlushPendingDestroy();
+                try { FlushPendingDestroy(); }
+                catch (Exception e) { failures.Add(e); }
             }
             finally
             {
                 ticking = false;
             }
 
-            failure?.Throw();
+            failures.ThrowIfAny();
         }
 
         void TickGroupCore(TickGroup group, float deltaTime)
@@ -207,6 +260,8 @@ namespace ActorCoreFramework
 
             try
             {
+                // 別スレッドで寿命が尽きたActorも、Tickを配送する前に破棄予約へ回す
+                DrainCrossThreadDestroyRequests();
                 tickGroups[(int)group].Tick(deltaTime);
             }
             finally
@@ -235,33 +290,55 @@ namespace ActorCoreFramework
             if (pendingDestroy.Count <= 0) { return; }
 
             // 1体の失敗で残りのActorが後始末を受け取れなくなるのを防ぐ。
-            // 最初の例外だけを控え、予約をすべて処理し終えてから呼び出し元へ投げ直す。
-            ExceptionDispatchInfo? failure = null;
+            // 最初の例外は予約をすべて処理し終えてから呼び出し元へ投げ直す。
+            var failures = new FailureCollector();
 
-            // 破棄処理中にさらにDestroyが積まれても同一フレームで拾う
-            for (var i = 0; i < pendingDestroy.Count; i++)
+            try
             {
-                var actor = pendingDestroy[i];
+                // 破棄処理中にさらにDestroyが積まれても同一フレームで拾う
+                for (var i = 0; i < pendingDestroy.Count; i++)
+                {
+                    var actor = pendingDestroy[i];
 
-                try { Unregister(actor, EndPlayReason.Destroyed); }
-                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+                    UnregisterTick(actor);
 
-                try { actor.Dispose(); }
-                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+                    try { actor.DispatchEndPlay(EndPlayReason.Destroyed); }
+                    catch (Exception e) { failures.Add(e); }
+
+                    try { actor.Dispose(); }
+                    catch (Exception e) { failures.Add(e); }
+                }
+            }
+            finally
+            {
+                pendingDestroy.Clear();
+                pendingDestroySet.Clear();
+
+                // 1体ずつList.Removeすると、大量に破棄したフレームがO(n^2)になる。
+                // 破棄し終えたActorは最後にまとめて取り除く。
+                RemoveDisposedActors();
+                foreach (var group in tickGroups) { group.Compact(); }
             }
 
-            pendingDestroy.Clear();
-            pendingDestroySet.Clear();
-
-            failure?.Throw();
+            failures.ThrowIfAny();
         }
 
-        void Unregister(Actor actor, EndPlayReason reason)
+        /// <summary>
+        /// 破棄し終えたActorを、並びを保ったまま一度の走査で取り除く。
+        /// Worldに登録されたActorがDisposedになる経路は破棄処理だけなので、状態で判別できる。
+        /// </summary>
+        void RemoveDisposedActors()
         {
-            UnregisterTick(actor);
+            var count = 0;
+            for (var i = 0; i < actors.Count; i++)
+            {
+                var actor = actors[i];
+                if (actor.State == ActorState.Disposed) { continue; }
 
-            actors.Remove(actor);
-            actor.DispatchEndPlay(reason);
+                actors[count++] = actor;
+            }
+
+            actors.RemoveRange(count, actors.Count - count);
         }
 
         void UnregisterTick(Actor actor)
@@ -291,7 +368,7 @@ namespace ActorCoreFramework
             // 1体の失敗で残りのActorが後始末を受け取れなくなるのを防ぐ。
             // ここで打ち切るとdisposedだけが立ち、二度目のDisposeも即returnするため
             // 残りのActorは永久にEndPlayもDisposeも受け取れなくなる。
-            ExceptionDispatchInfo? failure = null;
+            var failures = new FailureCollector();
 
             // 生成と逆順に破棄する(依存の切断順序を安定させる)
             for (var i = actors.Count - 1; i >= 0; i--)
@@ -300,10 +377,10 @@ namespace ActorCoreFramework
                 actor.PrimaryActorTick.registered = false;
 
                 try { actor.DispatchEndPlay(EndPlayReason.WorldShutdown); }
-                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+                catch (Exception e) { failures.Add(e); }
 
                 try { actor.Dispose(); }
-                catch (Exception e) { failure ??= ExceptionDispatchInfo.Capture(e); }
+                catch (Exception e) { failures.Add(e); }
             }
 
             actors.Clear();
@@ -311,7 +388,11 @@ namespace ActorCoreFramework
             pendingDestroySet.Clear();
             foreach (var group in tickGroups) { group.Clear(); }
 
-            failure?.Throw();
+            // 積まれていた破棄要求は、もう受け付ける先がないので捨てる。
+            // disposedの確認と積み込みの間に割り込まれて1件残っても、Worldごと解放されるだけで害はない。
+            while (crossThreadDestroyRequests.TryDequeue(out _)) { }
+
+            failures.ThrowIfAny();
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

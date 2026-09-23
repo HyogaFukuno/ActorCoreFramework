@@ -11,6 +11,11 @@ namespace ActorCoreFramework
     /// WorldをUnityのPlayerLoopに接続する。
     /// 静的状態はAutoStaticsCleanupによってPlay mode遷移時に自動リセットされるため、
     /// Domain Reload無効時も前回の再生の状態は持ち越されない。
+    ///
+    /// WorldLoopが持つのはTickの駆動だけで、Worldの寿命は持たない。
+    /// Play modeを抜けるとループからは外れるが、WorldのDisposeは行わないため、
+    /// Actorへ終了時のEndPlayを届けるには、Worldを生成した側がDisposeすること
+    /// (例: Worldを持つMonoBehaviourのOnDestroy。Play mode終了時にも呼ばれる)。
     /// </summary>
     [AutoStaticsCleanup]
     public static partial class WorldLoop

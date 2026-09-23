@@ -151,7 +151,9 @@ public sealed class PlayerController : Controller<Character>
     {
         if (TryGetControlledPawn(out var pawn))
         {
-            pawn.AddMovementInput(move.ReadValue<Vector2>());
+            // 入力空間(x, y)からワールド空間(水平面のx, z)への変換はController側で行う
+            var input = move.ReadValue<Vector2>();
+            pawn.AddMovementInput(new Vector3(input.x, 0.0f, input.y));
         }
     }
 }
@@ -166,6 +168,13 @@ Pawn または Controller が破棄されたときも、参照は自動的に切
 （現在の Pawn の解除だけが行われ、破棄済みの Pawn は掴みません）。
 破棄済みの Pawn は参照を切る機会がもう来ないため、掴むと Controller 側に参照が残り続けるからです。
 まだ `World` に登録していない Pawn は指定できます。後から登録すれば `BeginPlay` が届きます。
+
+Controller と別の `World` に登録された Pawn も、同じく `null` として扱われます。
+未登録のうちに指定した Pawn が後から別の `World` へ登録された場合も、その時点で解除されます。
+片方の `World` だけが破棄されたときに、もう片方の破棄済み Actor を掴み続けないためです。
+
+Pawn 自身が破棄されるときの `OnUnpossessed` は、Pawn の `OnEndPlay` より前に届きます。
+その時点では Component もまだ `EndPlay` を受け取っていないため、普段どおりに使えます。
 
 ### 型の対応
 
@@ -247,6 +256,10 @@ world.Spawn(() => new Weapon(...)).BindTo(owner.DestroyToken);
 購読は `BeginPlay` で始まり、`EndPlay` で解除されます。Actor が先に死んだ場合も購読は残らないため、
 紐づけ先が Actor を掴み続けることはありません。
 複数の寿命に紐づけたい場合は `CancellationTokenSource.CreateLinkedTokenSource` でまとめてください。
+
+トークンは別スレッドからキャンセルされても構いません(`CancelAfter` のタイマーなど)。
+`World` はスレッドセーフではないため、その場合の破棄予約は、次に `World` の Tick が回った冒頭で行われます。
+`World` を生成したスレッドからのキャンセルなら、その場で予約されます。
 
 ### 非同期処理
 

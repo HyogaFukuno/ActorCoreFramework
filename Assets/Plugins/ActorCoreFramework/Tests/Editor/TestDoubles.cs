@@ -91,6 +91,7 @@ namespace ActorCoreFramework.Tests
         public World? WorldAtDispose;
 
         public Action<TestComponent>? TickAction;
+        public Action<TestComponent>? EndPlayAction;
 
         protected override void OnBeginPlay()
         {
@@ -109,6 +110,7 @@ namespace ActorCoreFramework.Tests
         {
             EndPlayCount++;
             Log?.Add($"{Name}.EndPlay");
+            EndPlayAction?.Invoke(this);
         }
 
         protected override void OnDispose()
@@ -132,6 +134,7 @@ namespace ActorCoreFramework.Tests
     {
         public int PossessedCount;
         public int UnpossessedCount;
+        public int EndPlayCount;
 
         public Action<TestPawn>? PossessedAction;
         public Action<TestPawn>? UnpossessedAction;
@@ -149,6 +152,8 @@ namespace ActorCoreFramework.Tests
             UnpossessedCount++;
             UnpossessedAction?.Invoke(this);
         }
+
+        protected override void OnEndPlay(EndPlayReason reason) => EndPlayCount++;
     }
 
 

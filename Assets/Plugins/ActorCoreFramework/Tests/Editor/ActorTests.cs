@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 
 namespace ActorCoreFramework.Tests
@@ -633,6 +634,67 @@ namespace ActorCoreFramework.Tests
             TestActor? actor = null;
 
             Assert.Throws<ArgumentNullException>(() => actor!.BindTo(CancellationToken.None));
+        }
+
+
+        [Test]
+        public void BindTo_CancelFromAnotherThreadIsDeferredToTheOwnerThread()
+        {
+            using var lifetime = new CancellationTokenSource();
+            var actor = world.Register(new TestActor()).BindTo(lifetime.Token);
+
+            // CancelAfterのタイマーなど、Worldの所有スレッド以外でキャンセルされる場合。
+            // コールバックはキャンセルしたスレッドで走るので、そこでWorldを触らせてはいけない
+            Task.Run(() => lifetime.Cancel()).Wait();
+
+            Assert.That(actor.IsPendingDestroy, Is.False);
+
+            // 所有スレッドでTickが回った冒頭で破棄予約へ回る
+            world.Tick(0.016f);
+            Assert.That(actor.IsPendingDestroy, Is.True);
+
+            world.PostTick(0.016f);
+            Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
+        }
+
+        [Test]
+        public void RemoveComponent_OfSeveralComponentsDuringComponentEndPlayKeepsUnwinding()
+        {
+            var actor = new TestActor { Name = "a" };
+            var first = actor.Add(new TestComponent { Name = "c1" });
+            var second = actor.Add(new TestComponent { Name = "c2" });
+            var third = actor.Add(new TestComponent { Name = "c3" });
+            world.Register(actor);
+
+            // 逆順に回している最中に一覧が2つ縮むと、次の添字が範囲外になる
+            third.EndPlayAction = _ =>
+            {
+                actor.Remove(first);
+                actor.Remove(second);
+            };
+
+            world.Destroy(actor);
+            Assert.DoesNotThrow(() => world.PostTick(0.016f));
+
+            foreach (var component in new[] { first, second, third })
+            {
+                Assert.That(component.EndPlayCount, Is.EqualTo(1), component.Name);
+                Assert.That(component.IsDisposed, Is.True, component.Name);
+            }
+        }
+
+        [Test]
+        public void RemoveComponent_ReturnsFalseAfterTheActorIsDisposed()
+        {
+            var actor = new TestActor();
+            var component = actor.Add(new TestComponent());
+            world.Register(actor);
+
+            world.Destroy(actor);
+            world.PostTick(0.016f);
+
+            // Componentは破棄に伴って解放済み。取り外しを受け付けたように見せない
+            Assert.That(actor.Remove(component), Is.False);
         }
     }
 }

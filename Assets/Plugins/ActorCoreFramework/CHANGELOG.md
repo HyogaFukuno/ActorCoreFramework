@@ -5,6 +5,40 @@
 書式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に、
 バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### 修正
+
+- `BindTo` に渡したトークンが別スレッドでキャンセルされると(`CancelAfter` など)、
+  そのスレッドから `World.Destroy` が走り、World の内部状態が壊れる問題を修正しました。
+  所有スレッド以外からの破棄要求はキューへ積み、次に World の Tick が回った冒頭で受け付けます。
+- Component の `OnEndPlay` から他の Component を 2 つ以上取り外すと
+  `ArgumentOutOfRangeException` になる問題を修正しました。
+  EndPlay の配送中の取り外しは、配送を終えてから反映します。
+- 同じフレームで起きた 2 件目以降の例外が、ログにも出ずに失われていた問題を修正しました。
+  最初の 1 件はこれまでどおり呼び出し元へ投げ直し、以降は `Debug.LogException` へ出します。
+- Pawn 自身の破棄に伴う `OnUnpossessed` が、`OnEndPlay` の後(Component の後片付け後)に
+  届いていた問題を修正しました。UE と同じく `OnEndPlay` より前に届きます。
+- 別の World に登録された Pawn を Possess できてしまう問題を修正しました。
+  World 未登録のうちに Possess した Pawn が別の World へ登録された場合も解除されます。
+- `PrimaryActorTick.Enabled` を戻した直後に、`Interval` を待たずに Tick されていた問題を修正しました。
+- 破棄済みの Actor への `RemoveComponent` が `true` を返していた問題を修正しました。
+
+### 変更
+
+- 大量の Spawn / Destroy を行うフレームの計算量を O(n²) から改善しました。
+  Tick グループへの挿入は二分探索に、破棄したActorの除去はフレーム末尾の一括除去にしています。
+  これに伴い、`World.Actors` は PostTick 末尾の破棄処理が終わるまで、破棄中の Actor を含みます。
+  生きている Actor だけが必要な場合は `GetActors` を使ってください。
+
+### ドキュメント
+
+- `Character.Position` / `Character2D.Position2D` は物理ステップ上の座標であり、
+  Rigidbody の補間が効かないことを明記しました。描画の基準には `Transform.position` を使ってください。
+- `WorldLoop` は World の寿命を持たず、Play mode 終了時にも `World.Dispose` しないことを明記しました。
+- サンプルの `PlayerController` が、入力空間の `Vector2` をそのまま
+  `AddMovementInput` へ渡していたのを、ワールド空間の方向へ変換してから渡すように直しました。
+
 ## [2.2.0] - 2026-09-10
 
 ### 追加

@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace ActorCoreFramework.Tests
 {
@@ -292,6 +295,46 @@ namespace ActorCoreFramework.Tests
 
             // 破棄予約を飛ばすと、Destroyされたはずのactorが次フレームまで生き残る
             Assert.That(doomed.State, Is.EqualTo(ActorState.Disposed));
+        }
+
+
+        [Test]
+        public void Tick_LogsEveryExceptionAfterTheFirst()
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                var thrower = new ThrowingActor { Name = $"thrower{i}" };
+                thrower.PrimaryActorTick.CanEverTick = true;
+                world.Register(thrower);
+            }
+
+            // 最初の1件は呼び出し元へ、残りはその場でログへ。黙って消えるものがないこと
+            LogAssert.Expect(LogType.Exception, new Regex("test"));
+            LogAssert.Expect(LogType.Exception, new Regex("test"));
+
+            Assert.Throws<InvalidOperationException>(() => world.Tick(0.016f));
+        }
+
+        [Test]
+        public void Destroy_OfManyActorsKeepsTheOrderOfTheSurvivors()
+        {
+            var spawned = new List<TestActor>();
+            for (var i = 0; i < 10; i++) { spawned.Add(world.Register(Ticking($"a{i}"))); }
+
+            for (var i = 0; i < spawned.Count; i += 2) { world.Destroy(spawned[i]); }
+            world.PostTick(0.016f);
+
+            // 破棄はまとめて取り除かれるが、残ったActorの並びは登録順のまま
+            var survivors = new List<Actor>();
+            for (var i = 1; i < spawned.Count; i += 2) { survivors.Add(spawned[i]); }
+
+            Assert.That(world.Actors, Is.EqualTo(survivors));
+
+            world.Tick(0.016f);
+            foreach (var actor in spawned)
+            {
+                Assert.That(actor.TickCount, Is.EqualTo(actor.IsPendingDestroy ? 0 : 1), actor.Name);
+            }
         }
     }
 }

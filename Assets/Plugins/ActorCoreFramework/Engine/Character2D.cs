@@ -8,7 +8,11 @@ namespace ActorCoreFramework
         public Collider2D Collider { get; }
 
         /// <summary>
-        /// 物理の補間が効いた座標を返す。zはPawn2D側でTransformから補われる。
+        /// 物理ステップ上の座標を返す。zはPawn2D側でTransformから補われる。
+        ///
+        /// Rigidbody2Dの補間(Interpolate)はTransformにだけ反映され、この値には効かない。
+        /// FixedUpdateの間隔でしか変わらないので、カメラ追従や描画位置の基準には
+        /// 補間済みのTransform.positionを使うこと。
         /// </summary>
         public sealed override Vector2 Position2D => Rigidbody.position;
 

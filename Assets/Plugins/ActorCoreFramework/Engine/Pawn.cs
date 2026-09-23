@@ -38,12 +38,30 @@ namespace ActorCoreFramework
         /// <summary>Possessされた直後に呼ばれる。この時点でControllerは設定済み。</summary>
         protected virtual void OnPossessed() { }
 
-        /// <summary>Unpossessされた直後に呼ばれる。この時点でControllerはnull。</summary>
+        /// <summary>
+        /// Unpossessされた直後に呼ばれる。この時点でControllerはnull。
+        /// Pawn自身の破棄に伴う場合は、OnEndPlayより前に呼ばれる。
+        /// この時点ではComponentもまだEndPlayを受け取っておらず、普段どおりに使える。
+        /// </summary>
         protected virtual void OnUnpossessed() { }
 
-        internal override void OnInternalEndPlay(EndPlayReason reason)
+        internal override void OnInternalBeginPlay()
         {
-            // 破棄されるPawnへの参照をControllerに残さない
+            // World未登録のうちにPossessされ、その後Controllerと別のWorldへ登録された。
+            // Worldをまたいだ参照は残さない(Controller.CanPossessと同じ理由)。
+            var controller = Controller;
+            if (controller != null && !ReferenceEquals(controller.World, World))
+            {
+                controller.ForceUnpossess();
+            }
+        }
+
+        internal override void OnInternalPreEndPlay()
+        {
+            // 破棄されるPawnへの参照をControllerに残さない。
+            // OnEndPlayより後に回すと、後片付けを終えたPawnへOnUnpossessedが届き、
+            // 既にEndPlayを受け取ったComponentを触ることになる。
+            // UEでもPawnの破棄に伴うUnPossessはEndPlayより前に行われる。
             Controller?.ForceUnpossess();
         }
     }
