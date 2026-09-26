@@ -60,6 +60,11 @@ namespace ActorCoreFramework
         }
 
         /// <summary>
+        /// WorldがループへTickを配送される状態か。World Debuggerの診断表示に使う。
+        /// </summary>
+        internal static bool IsRegistered(World world) => s_worlds.Contains(world);
+
+        /// <summary>
         /// 引数のWorldをループから解除する。
         /// 解除経路をSubscriptionに一本化するため、外部へは公開しない。
         /// </summary>

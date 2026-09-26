@@ -308,5 +308,45 @@ namespace ActorCoreFramework.Tests
             Assert.That(pawn.Controller, Is.Null);
             Assert.That(pawn.UnpossessedCount, Is.EqualTo(1));
         }
+
+        [Test]
+        public void ControlledPawn_HidesAPawnPendingDestroy()
+        {
+            var pawn = world.Register(NewPawn());
+            var controller = world.Register(new TestController(pawn));
+
+            world.Destroy(pawn);
+
+            // Possessの解除は実際の破棄まで遅れるが、その間も操作対象としては返さない。
+            // BindToで紐づけたGameObjectが既に壊れていても、Controllerから触らせないため。
+            Assert.That(controller.ControlledPawn, Is.Null);
+            Assert.That(controller.HasControlledPawn, Is.False);
+            Assert.That(controller.TryGetPawn(out var controlled), Is.False);
+            Assert.That(controlled, Is.Null);
+
+            // OnUnpossessedは従来どおり、実際の破棄に伴って一度だけ届く
+            Assert.That(pawn.UnpossessedCount, Is.Zero);
+
+            world.PostTick(0.016f);
+
+            Assert.That(pawn.Controller, Is.Null);
+            Assert.That(pawn.UnpossessedCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void SwitchControlledPawn_ReleasesAPawnPendingDestroy()
+        {
+            var doomed = world.Register(NewPawn("doomed"));
+            var next = world.Register(NewPawn("next"));
+            var controller = world.Register(new TestController(doomed));
+
+            world.Destroy(doomed);
+            controller.SwitchControlledPawn(next);
+
+            // 見えなくなっているだけで、Possess状態としては解除が必要
+            Assert.That(doomed.Controller, Is.Null);
+            Assert.That(doomed.UnpossessedCount, Is.EqualTo(1));
+            Assert.That(controller.ControlledPawn, Is.SameAs(next));
+        }
     }
 }

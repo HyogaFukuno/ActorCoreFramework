@@ -696,5 +696,43 @@ namespace ActorCoreFramework.Tests
             // Componentは破棄に伴って解放済み。取り外しを受け付けたように見せない
             Assert.That(actor.Remove(component), Is.False);
         }
+
+        [Test]
+        public void RemoveComponent_DuringComponentBeginPlayDoesNotSkipTheNextComponent()
+        {
+            var actor = new TestActor();
+            var first = actor.Add(new TestComponent { Name = "c1" });
+            var second = actor.Add(new TestComponent { Name = "c2" });
+
+            // その場で詰めると添字がずれて、後ろのComponentがBeginPlayを飛ばされる
+            first.BeginPlayAction = self => actor.Remove(self);
+
+            world.Register(actor);
+
+            Assert.That(second.BeginPlayCount, Is.EqualTo(1));
+            Assert.That(second.HasBegunPlay, Is.True);
+
+            Assert.That(first.IsDisposed, Is.True);
+            Assert.That(first.EndPlayCount, Is.EqualTo(1));
+            Assert.That(actor.Components, Is.EqualTo(new[] { second }));
+        }
+
+        [Test]
+        public void RemoveComponent_DuringComponentBeginPlaySkipsTheRemovedComponent()
+        {
+            var actor = new TestActor();
+            var first = actor.Add(new TestComponent { Name = "c1" });
+            var second = actor.Add(new TestComponent { Name = "c2" });
+
+            first.BeginPlayAction = _ => actor.Remove(second);
+
+            world.Register(actor);
+
+            // BeginPlayを受け取る前に取り外されたので、対になるEndPlayも届かない
+            Assert.That(second.BeginPlayCount, Is.Zero);
+            Assert.That(second.EndPlayCount, Is.Zero);
+            Assert.That(second.IsDisposed, Is.True);
+            Assert.That(actor.Components, Is.EqualTo(new[] { first }));
+        }
     }
 }

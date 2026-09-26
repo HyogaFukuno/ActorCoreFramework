@@ -317,9 +317,25 @@ namespace ActorCoreFramework
             // フレームワーク内部の処理は非virtualなここで行う。
             OnInternalBeginPlay();
 
-            for (var i = 0; i < components.Count; i++)
+            // ComponentのBeginPlayから他のComponentが取り外されても添字が飛ばないよう、
+            // 除去は回し終えてから反映する。飛ばされたComponentはBeginPlayを受け取らないまま
+            // Tickだけ配送されてしまう。取り外しが予約されたComponentにはBeginPlayを配送しない。
+            deferRemovalDepth++;
+            try
             {
-                components[i].DispatchBeginPlay();
+                for (var i = 0; i < components.Count; i++)
+                {
+                    var component = components[i];
+                    if (component.IsPendingRemoval) { continue; }
+
+                    component.DispatchBeginPlay();
+                }
+            }
+            finally
+            {
+                // BeginPlayが例外で抜けても、予約された除去は必ず反映してから戻る
+                deferRemovalDepth--;
+                if (deferRemovalDepth == 0) { FlushPendingRemoval(); }
             }
 
             OnBeginPlay();

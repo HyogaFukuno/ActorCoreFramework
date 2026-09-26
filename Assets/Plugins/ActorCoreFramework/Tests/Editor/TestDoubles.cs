@@ -90,6 +90,7 @@ namespace ActorCoreFramework.Tests
         /// <summary>Dispose時点で所有者からWorldをたどれるかの確認用。</summary>
         public World? WorldAtDispose;
 
+        public Action<TestComponent>? BeginPlayAction;
         public Action<TestComponent>? TickAction;
         public Action<TestComponent>? EndPlayAction;
 
@@ -97,6 +98,7 @@ namespace ActorCoreFramework.Tests
         {
             BeginPlayCount++;
             Log?.Add($"{Name}.BeginPlay");
+            BeginPlayAction?.Invoke(this);
         }
 
         protected override void OnTick(float deltaTime)
