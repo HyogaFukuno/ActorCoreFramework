@@ -14,6 +14,11 @@ namespace ActorCoreFramework
     /// </summary>
     public sealed class World : IDisposable
     {
+        /// <summary>
+        /// Idの発番元。Actorと同じく、Domain Reloadを無効にしても意図的にリセットしない。
+        /// </summary>
+        static int s_nextId;
+
         readonly List<Actor> actors = new();
 
         // 予約順を保つListと、重複判定用のSetを併用する
@@ -40,12 +45,40 @@ namespace ActorCoreFramework
         volatile bool disposed;
         bool ticking;
 
+        string? name;
+
+        /// <summary>
+        /// プロセス内で一意な識別子。生成順に1から発番される。
+        /// </summary>
+        public int Id { get; } = System.Threading.Interlocked.Increment(ref s_nextId);
+
+        /// <summary>
+        /// デバッグ表示用の名前。既定は「World#Id」。
+        /// 複数のWorldを使う場合、World Debuggerで見分けられるよう名前を付けておくとよい。
+        /// nullや空文字を代入すると既定へ戻る。
+        /// </summary>
+        public string Name
+        {
+            get => name ??= $"{nameof(World)}#{Id}";
+            set => name = string.IsNullOrEmpty(value) ? null : value;
+        }
+
+        /// <summary>破棄済みならtrue。</summary>
+        public bool IsDisposed => disposed;
+
         /// <summary>
         /// 登録されているActor。破棄が予約されたActorや、PostTick末尾の破棄処理の最中にある
         /// Actorも含む(破棄処理が終わった時点でまとめて取り除かれる)。
         /// 生きているActorだけを扱いたい場合はGetActorsを使うこと。
         /// </summary>
         public IReadOnlyList<Actor> Actors => actors;
+
+
+        public World()
+        {
+            // Editor上のデバッグ表示のためだけに控える。ビルドでは何もしない
+            WorldRegistry.Add(this);
+        }
 
 
         static int GetTickGroupCount()
@@ -131,7 +164,14 @@ namespace ActorCoreFramework
 
                 // 末尾付近にいるはずなので後ろから探す。BeginPlay中に更に登録された分だけ前にずれる
                 actors.RemoveAt(actors.LastIndexOf(actor));
-                actor.Dispose();
+
+                // 巻き戻しのEndPlayは、初期化が途中で止まったActorに届く。
+                // OnBeginPlayで確保するはずだったものを解放しようとして、ここでも例外になりやすい。
+                // それをそのまま伝えると本来の原因であるBeginPlayの例外が消えるので、
+                // 巻き戻しの例外はログに出すだけにして、呼び出し元へはBeginPlayの例外を投げ直す。
+                try { actor.Dispose(); }
+                catch (Exception rollbackException) { UnityEngine.Debug.LogException(rollbackException); }
+
                 throw;
             }
 
@@ -392,8 +432,12 @@ namespace ActorCoreFramework
             // disposedの確認と積み込みの間に割り込まれて1件残っても、Worldごと解放されるだけで害はない。
             while (crossThreadDestroyRequests.TryDequeue(out _)) { }
 
+            WorldRegistry.Remove(this);
+
             failures.ThrowIfAny();
         }
+
+        public override string ToString() => Name;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void ThrowIfDisposed()

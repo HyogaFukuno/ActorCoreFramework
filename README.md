@@ -173,6 +173,9 @@ Controller と別の `World` に登録された Pawn も、同じく `null` と�
 未登録のうちに指定した Pawn が後から別の `World` へ登録された場合も、その時点で解除されます。
 片方の `World` だけが破棄されたときに、もう片方の破棄済み Actor を掴み続けないためです。
 
+`World.Destroy` で破棄が予約された Pawn は、実際に破棄されるまでの間も `ControlledPawn` / `TryGetControlledPawn` からは見えなくなります
+（検索系と同じ扱い。`OnUnpossessed` は実際の破棄に伴って届きます）。
+
 Pawn 自身が破棄されるときの `OnUnpossessed` は、Pawn の `OnEndPlay` より前に届きます。
 その時点では Component もまだ `EndPlay` を受け取っていないため、普段どおりに使えます。
 
@@ -318,6 +321,24 @@ async Awaitable RunAsync(CancellationToken token)
 
 `World.Dispose` を `OnTick` の中から呼ぶことはできません（`InvalidOperationException`）。
 反復中の Tick リストを破棄することになり、そのフレームの残りが黙って落ちるためです。
+
+## World Debugger
+
+Actor は GameObject ではないため、Hierarchy にも Inspector にも現れません。
+**Window > Actor Core Framework > World Debugger** で、生きている World と Actor を一覧できます。
+
+- Actor の状態(Playing / 破棄予約など)、Tick の設定、Component、Pawn と Controller の関係
+- 派生クラスで宣言したフィールドの現在値(読み取り専用。private も表示)
+- Pawn の GameObject を Hierarchy で選択。逆に Hierarchy で GameObject を選ぶと、その Pawn が選ばれる
+
+次のような、例外にならず黙って何も起きない誤りを警告として表示します。
+
+- `OnTick` を実装しているのに `CanEverTick` が false(Component の Tick が所有者の設定で止まっている場合も)
+- World が `WorldLoop` に登録されていない
+- Play mode を抜けても World が `Dispose` されていない
+- GameObject が破棄されたのに Pawn が World に残っている(`BindTo` の付け忘れ)
+
+複数の World を使う場合は `world.Name = "Stage1";` のように名前を付けておくと見分けやすくなります。
 
 ## テスト
 

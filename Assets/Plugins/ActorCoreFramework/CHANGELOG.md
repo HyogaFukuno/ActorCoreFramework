@@ -5,6 +5,32 @@
 書式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に、
 バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
+## [Unreleased]
+
+### 追加
+
+- World Debugger(`Window > Actor Core Framework > World Debugger`)を追加しました。
+  生きている World と、Spawn されている Actor / Component の状態、Tick の設定、
+  Pawn と Controller の関係、利用者が宣言したフィールドを UI Toolkit のウィンドウで一覧できます。
+  `CanEverTick` の設定漏れ、`WorldLoop` への登録漏れ、`World.Dispose` の呼び忘れ、
+  GameObject が破棄されたまま残っている Pawn など、例外にならず黙って何も起きない誤りを警告として表示します。
+- `World.Id` / `World.Name` / `World.IsDisposed` を追加しました。
+
+### 修正
+
+- 破棄が予約された Pawn を、Controller の `ControlledPawn` / `TryGetControlledPawn` が
+  実際の破棄まで返し続けていた問題を修正しました。`BindTo(destroyCancellationToken)` で
+  紐づけた Pawn では、GameObject の破棄後も次のフレームの Tick で Controller から
+  壊れた Transform に触れて `MissingReferenceException` になっていました。
+  破棄が予約された Pawn は検索系と同じく見えなくなります。`OnUnpossessed` はこれまでどおり
+  実際の破棄に伴って届きます。
+- `OnBeginPlay` が例外を投げたときの巻き戻しで `OnEndPlay` も例外を投げると、
+  本来の原因である `OnBeginPlay` の例外が失われていた問題を修正しました。
+  呼び出し元へは `OnBeginPlay` の例外を投げ直し、巻き戻しの例外は `Debug.LogException` へ出します。
+- Component の `OnBeginPlay` の中で Component が取り外されると、後ろの Component が
+  BeginPlay を受け取らないまま Tick だけ配送されていた問題を修正しました。
+  取り外しは BeginPlay の配送を終えてから反映し、BeginPlay 前に取り外された Component には配送しません。
+
 ## [2.3.0] - 2026-09-23
 
 ### 修正

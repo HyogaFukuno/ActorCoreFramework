@@ -11,10 +11,19 @@ namespace ActorCoreFramework
     public abstract class Controller : Actor
     {
         /// <summary>
-        /// 操作中のPawn。型付きで取得するならTryGetControlledPawnを使う。
-        /// Possess状態の唯一の保持先であり、Pawn.Controllerと常に対で更新される。
+        /// Possess状態の唯一の保持先。Pawn.Controllerと常に対で更新される。
+        /// 破棄が予約されたPawnも、実際に破棄されてPossessが解除されるまではここに残る。
         /// </summary>
-        public Pawn? ControlledPawn { get; private protected set; }
+        private protected Pawn? possessedPawn;
+
+        /// <summary>
+        /// 操作中のPawn。型付きで取得するならTryGetControlledPawnを使う。
+        ///
+        /// 破棄が予約されたPawnはnullとして見せる。Possessの解除は実際の破棄(PostTick末尾)まで
+        /// 遅れるため、その間に操作対象として返すと、BindToで紐づけたGameObjectが既に壊れた
+        /// Pawnを触らせることになる。検索系が破棄予約済みのActorを外すのと同じ扱い。
+        /// </summary>
+        public Pawn? ControlledPawn => possessedPawn is { IsPendingDestroy: false } pawn ? pawn : null;
 
         public bool HasControlledPawn => ControlledPawn != null;
 
@@ -29,7 +38,7 @@ namespace ActorCoreFramework
     {
         /// <summary>
         /// BeginPlay前に指定された操作対象。BeginPlayでPossessへ引き渡した後は使わない。
-        /// Possess中の状態は基底のControlledPawnだけが持つ。
+        /// Possess中の状態は基底のpossessedPawnだけが持つ。
         /// </summary>
         TPawn? pendingPossess;
 
@@ -113,7 +122,7 @@ namespace ActorCoreFramework
             // 現在のPawnはこの後の経路で通常どおり解除される。
             if (pawn != null && !CanPossess(pawn)) { pawn = null; }
 
-            if (ReferenceEquals(ControlledPawn, pawn)) { return; }
+            if (ReferenceEquals(possessedPawn, pawn)) { return; }
 
             // OnUnpossessed / OnPossessedの中から同じControllerのPossessが呼ばれると、
             // 中途半端な状態の上に別の差し替えが乗ってしまう。実装の誤りなので明示的に弾く。
@@ -128,10 +137,11 @@ namespace ActorCoreFramework
 
             try
             {
-                if (ControlledPawn != null)
+                // 破棄が予約されたPawnもここで確実に解除する。ControlledPawnはそれを隠すので使わない
+                if (possessedPawn != null)
                 {
-                    var previous = ControlledPawn;
-                    ControlledPawn = null;
+                    var previous = possessedPawn;
+                    possessedPawn = null;
 
                     previous.Controller = null;
                     previous.DispatchUnpossessed();
@@ -142,7 +152,7 @@ namespace ActorCoreFramework
                 // 既に他のControllerが操作しているなら、先にそちらを解除する
                 pawn.Controller?.ForceUnpossess();
 
-                ControlledPawn = pawn;
+                possessedPawn = pawn;
 
                 pawn.Controller = this;
                 pawn.DispatchPossessed();
@@ -153,6 +163,9 @@ namespace ActorCoreFramework
             }
         }
 
+        /// <summary>
+        /// 操作中のPawnを型付きで取得する。破棄が予約されたPawnは取得できない(ControlledPawnと同じ)。
+        /// </summary>
         protected bool TryGetControlledPawn([NotNullWhen(true)] out TPawn? pawn)
         {
             pawn = ControlledPawn as TPawn;

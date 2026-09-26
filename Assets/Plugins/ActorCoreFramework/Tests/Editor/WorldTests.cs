@@ -336,5 +336,24 @@ namespace ActorCoreFramework.Tests
                 Assert.That(actor.TickCount, Is.EqualTo(actor.IsPendingDestroy ? 0 : 1), actor.Name);
             }
         }
+
+        [Test]
+        public void Register_RethrowsTheBeginPlayExceptionEvenWhenTheRollbackThrows()
+        {
+            // 初期化が途中で止まったActorは、巻き戻しのEndPlayでも例外を投げやすい
+            var actor = new TestActor
+            {
+                BeginPlayAction = _ => throw new InvalidOperationException("begin"),
+                EndPlayAction = _ => throw new ArgumentException("rollback"),
+            };
+
+            // 本来の原因であるBeginPlayの例外が伝わり、巻き戻しの例外はログへ回る
+            LogAssert.Expect(LogType.Exception, new Regex("rollback"));
+            var thrown = Assert.Throws<InvalidOperationException>(() => world.Register(actor));
+
+            Assert.That(thrown!.Message, Is.EqualTo("begin"));
+            Assert.That(world.Actors, Has.No.Member(actor));
+            Assert.That(actor.State, Is.EqualTo(ActorState.Disposed));
+        }
     }
 }
